@@ -35,7 +35,7 @@ func main() {
 	flag.Parse()
 
 	if *tfile == "" {
-		fmt.Printf("Usage for %[1]s: %[1]s [-x] [-c] [-o] [-f file] [files ...]\n", "tar")
+		fmt.Printf("Usage for %[1]s: %[1]s [-x] [-o] [-c] [-f file] [files ...]\n", "tar")
 		flag.PrintDefaults()
 	}
 
