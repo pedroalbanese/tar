@@ -10,8 +10,7 @@
   -f string
         tar file ('-' for stdin)
   -o    extract to stdout
-  -x    extract
-  </pre>
+  -x    extract</pre>
 ## License
 
 This project is licensed under the MIT License.
