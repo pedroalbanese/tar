@@ -8,7 +8,7 @@
 <pre>Usage for tar: tar [-x] [-c] [-o] [-f file] [files ...]
   -c    create
   -f string
-        tar file
+        tar file ('-' for stdin)
   -o    extract to stdout
   -x    extract
   </pre>
