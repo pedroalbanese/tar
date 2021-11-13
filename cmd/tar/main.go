@@ -39,7 +39,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	if *extract {
+	if *extract || *stdout {
 		var ifile io.Reader
 		if *tfile == "-" {
 			ifile = os.Stdin
@@ -83,7 +83,7 @@ func main() {
 					log.Fatal(err)
 
 				}
-				fmt.Println()
+				fmt.Print()
 			}
 		}
 
