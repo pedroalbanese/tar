@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	tfile   = flag.String("f", "", "tar file")
+	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
 	extract = flag.Bool("x", false, "extract")
 	create  = flag.Bool("c", false, "create")
 	stdout  = flag.Bool("o", false, "extract to stdout")
