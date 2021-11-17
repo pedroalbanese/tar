@@ -26,9 +26,10 @@ func walkpath(path string, f os.FileInfo, err error) error {
 	tw.WriteHeader(header)
 	ifile, _ := os.Open(path)
 	io.Copy(tw, ifile)
-	fmt.Printf("%s with %d bytes\n", path, f.Size())
+	if *tfile != "-" {
+		fmt.Fprintf(os.Stderr, "%s with %d bytes\n", path, f.Size())
+	}
 	return nil
-
 }
 
 func main() {
@@ -88,14 +89,20 @@ func main() {
 		}
 
 	} else if *create {
-		ofile, _ := os.Create(*tfile)
-		tw = tar.NewWriter(ofile)
-		for _, incpath := range flag.Args() {
-			filepath.Walk(incpath, walkpath)
+		if *tfile == "-" {
+			tw = tar.NewWriter(os.Stdout)
+			for _, incpath := range flag.Args() {
+				filepath.Walk(incpath, walkpath)
+			}
+			tw.Close()
+		} else {
+			ofile, _ := os.Create(*tfile)
+			tw = tar.NewWriter(ofile)
+			for _, incpath := range flag.Args() {
+				filepath.Walk(incpath, walkpath)
+			}
+			tw.Close()
+			ofile.Close()
 		}
-		tw.Close()
-		ofile.Close()
 	}
-
-	return
 }
