@@ -17,4 +17,4 @@
 
 This project is licensed under the MIT License.
 
-##### Copyright (c) 2011-2014 Alexander "Surma" Surma <surma@surmair.de> (c) 2015 Chris Howey <chris@howe.me> (c) 2020-2021 Pedro Albanese <pedroalbanese@hotmail.com>
+##### Copyright (c) 2015 Chris Howey <chris@howe.me> (c) 2021 Pedro Albanese <pedroalbanese@hotmail.com>
