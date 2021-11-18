@@ -18,4 +18,5 @@
 This project is licensed under the MIT License.
 
 **Copyright (c) 2015 Chris Howey <chris@howe.me>**
+
 **Copyright (c) 2021 Pedro Albanese <pedroalbanese@hotmail.com>**
