@@ -11,10 +11,12 @@ import (
 )
 
 var (
-	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
-	extract = flag.Bool("x", false, "extract")
+	append  = flag.Bool("a", false, "append instead overwrite")
 	create  = flag.Bool("c", false, "create")
+	extract = flag.Bool("x", false, "extract")
+	list    = flag.Bool("l", false, "list")
 	stdout  = flag.Bool("o", false, "extract to stdout")
+	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
 
 	tw *tar.Writer
 	tr *tar.Reader
@@ -36,8 +38,26 @@ func main() {
 	flag.Parse()
 
 	if *tfile == "" {
-		fmt.Printf("Usage for %[1]s: %[1]s [-x] [-o] [-c] [-f file] [files ...]\n", "tar")
+		fmt.Printf("Usage for %[1]s: %[1]s [-x|o] [-c|a] [-f file] [files ...]\n", "tar")
 		flag.PrintDefaults()
+	}
+
+	if *list {
+		var ifile io.Reader
+		if *tfile == "-" {
+			ifile = os.Stdin
+		} else {
+			ifile, _ = os.Open(*tfile)
+		}
+
+		tr := tar.NewReader(ifile)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			fmt.Println(hdr.Name)
+		}
 	}
 
 	if *extract || *stdout {
@@ -86,6 +106,25 @@ func main() {
 				}
 				fmt.Print()
 			}
+		}
+
+	} else if *append {
+		if _, err := os.Stat(*tfile); err == nil {
+			ofile, err := os.OpenFile(*tfile, os.O_RDWR, os.ModePerm)
+			if err != nil {
+				log.Fatalln(err)
+			}
+			if _, err = ofile.Seek(-1024, os.SEEK_END); err != nil {
+				log.Fatalln(err)
+			}
+			tw = tar.NewWriter(ofile)
+			for _, incpath := range flag.Args() {
+				filepath.Walk(incpath, walkpath)
+			}
+			tw.Close()
+			ofile.Close()
+		} else {
+			fmt.Fprintf(os.Stderr, "%s not found\n", *tfile)
 		}
 
 	} else if *create {
