@@ -23,7 +23,10 @@ var (
 )
 
 func walkpath(path string, f os.FileInfo, err error) error {
-	header, _ := tar.FileInfoHeader(f, "")
+	header, err := tar.FileInfoHeader(f, "")
+	if err != nil {
+		log.Fatal(path + " not found. Process aborted.")
+	}
 	header.Name = path
 	tw.WriteHeader(header)
 	ifile, _ := os.Open(path)
