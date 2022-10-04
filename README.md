@@ -7,7 +7,7 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/pedroalbanese/tar)](https://github.com/pedroalbanese/tar/releases)
 ###  Minimalist Tar Implementation written in Go
 <pre>Usage for tar: tar [-x|o] [-c|a] [-f file] [files ...]
-  -a    append instead overwrite
+  -a    append instead of overwrite
   -c    create
   -f string
         tar file ('-' for stdin)
