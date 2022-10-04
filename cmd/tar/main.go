@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	append  = flag.Bool("a", false, "append instead overwrite")
+	append  = flag.Bool("a", false, "append instead of overwrite")
 	create  = flag.Bool("c", false, "create")
 	extract = flag.Bool("x", false, "extract")
 	list    = flag.Bool("l", false, "list")
