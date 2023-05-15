@@ -6,7 +6,7 @@
 [![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pedroalbanese/tar)](https://golang.org)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/pedroalbanese/tar)](https://github.com/pedroalbanese/tar/releases)
 ###  Minimalist Tar Implementation written in Go
-<pre>Usage for tar: tar [-x|o] [-c|a] [-f file] [files ...]
+<pre>Usage for tar: tar [-x|o] [-c|a] [-d] [-f file] [files ...]
   -a    append instead of overwrite
   -c    create
   -d    delete files from tarball
