@@ -2,9 +2,11 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 
 var (
 	append  = flag.Bool("a", false, "append instead of overwrite")
+	delete  = flag.Bool("d", false, "delete files from tarball")
 	create  = flag.Bool("c", false, "create")
 	extract = flag.Bool("x", false, "extract")
 	list    = flag.Bool("l", false, "list")
@@ -25,7 +28,7 @@ var (
 func walkpath(path string, f os.FileInfo, err error) error {
 	header, err := tar.FileInfoHeader(f, "")
 	if err != nil {
-		log.Fatal(path + " not found. Proccess aborted.")
+		log.Fatal(path + " not found. Process aborted.")
 	}
 	header.Name = path
 	tw.WriteHeader(header)
@@ -60,6 +63,13 @@ func main() {
 				break
 			}
 			fmt.Println(hdr.Name)
+		}
+	}
+
+	if *delete {
+		err := deleteFromTarball(*tfile, flag.Args())
+		if err != nil {
+			log.Fatalf("Error deleting files from tarball: %s", err)
 		}
 	}
 
@@ -147,4 +157,64 @@ func main() {
 			ofile.Close()
 		}
 	}
+}
+
+func deleteFromTarball(tarballPath string, filesToDelete []string) error {
+	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("Error opening the Tarball file: %s", err)
+	}
+	defer tarballFile.Close()
+
+	tarballData, err := ioutil.ReadAll(tarballFile)
+	if err != nil {
+		return fmt.Errorf("Error reading the content of the tarball: %s", err)
+	}
+
+	if err := tarballFile.Close(); err != nil {
+		return fmt.Errorf("Error closing the tarball file: %s", err)
+	}
+
+	newTarballFile, err := os.Create(tarballPath)
+	if err != nil {
+		return fmt.Errorf("Error creating the new tarball file: %s", err)
+	}
+	defer newTarballFile.Close()
+
+	tw := tar.NewWriter(newTarballFile)
+
+	tr := tar.NewReader(bytes.NewReader(tarballData))
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("Error reading the tarball header: %s", err)
+		}
+
+		deleteFile := false
+		for _, fileToDelete := range filesToDelete {
+			if header.Name == fileToDelete {
+				deleteFile = true
+				break
+			}
+		}
+
+		if !deleteFile {
+			if err := tw.WriteHeader(header); err != nil {
+				return fmt.Errorf("Error writing the file header to the new tarball: %s", err)
+			}
+			if _, err := io.Copy(tw, tr); err != nil {
+				return fmt.Errorf("Error copying the file content to the new tarball: %s", err)
+			}
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("Error closing the tarball writer: %s", err)
+	}
+
+	return nil
 }
