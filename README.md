@@ -9,6 +9,7 @@
 <pre>Usage for tar: tar [-x|o] [-c|a] [-f file] [files ...]
   -a    append instead of overwrite
   -c    create
+  -d    delete files from tarball
   -f string
         tar file ('-' for stdin)
   -l    list
