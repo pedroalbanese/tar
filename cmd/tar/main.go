@@ -170,11 +170,9 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	if err != nil {
 		return fmt.Errorf("Error reading the content of the tarball: %s", err)
 	}
-
 	if err := tarballFile.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball file: %s", err)
 	}
-
 	newTarballFile, err := os.Create(tarballPath)
 	if err != nil {
 		return fmt.Errorf("Error creating the new tarball file: %s", err)
@@ -182,7 +180,6 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	defer newTarballFile.Close()
 
 	tw := tar.NewWriter(newTarballFile)
-
 	tr := tar.NewReader(bytes.NewReader(tarballData))
 
 	for {
@@ -193,7 +190,6 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 		if err != nil {
 			return fmt.Errorf("Error reading the tarball header: %s", err)
 		}
-
 		deleteFile := false
 		for _, fileToDelete := range filesToDelete {
 			if header.Name == fileToDelete {
@@ -201,7 +197,6 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 				break
 			}
 		}
-
 		if !deleteFile {
 			if err := tw.WriteHeader(header); err != nil {
 				return fmt.Errorf("Error writing the file header to the new tarball: %s", err)
@@ -211,10 +206,8 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 			}
 		}
 	}
-
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball writer: %s", err)
 	}
-
 	return nil
 }
