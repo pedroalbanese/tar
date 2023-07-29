@@ -16,7 +16,7 @@
   -o    extract to stdout
   -x    extract</pre>
 
-
+### Features:
    1. Create tarball (-c or create): Allows creating a new tarball from a list of files or directories passed as arguments. It also supports the use of wildcards to specify a set of files to include in the tarball.
 
    2. Extract tarball (-x or extract): Allows extracting the contents of a tarball. If no file or directory is specified as an argument, it extracts the entire content of the tarball. Otherwise, it extracts only the files or directories corresponding to the specified arguments.
