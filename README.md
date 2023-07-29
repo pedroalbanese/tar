@@ -7,6 +7,8 @@
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/pedroalbanese/tar)](https://github.com/pedroalbanese/tar/releases)
 ###  Minimalist Tar Implementation written in Go
 Tarballs are compressed archive files commonly used in Unix-like operating systems to group multiple files and directories into a single file for easy storage, transport, and distribution.
+
+### Usage
 <pre>Usage for tar: tar [-x|o] [-c|a] [-d|l] [-f file] [files ...]
   -a    append instead of overwrite
   -c    create
@@ -17,7 +19,7 @@ Tarballs are compressed archive files commonly used in Unix-like operating syste
   -o    extract to stdout
   -x    extract</pre>
 
-### Features:
+### Features
    1. **Create tarball** (`-c` or `create`): Allows creating a new tarball from a list of files or directories passed as arguments. It also supports the use of wildcards to specify a set of files to include in the tarball.
 
    2. **Extract tarball** (`-x` or `extract`): Allows extracting the contents of a tarball. If no file or directory is specified as an argument, it extracts the entire content of the tarball. Otherwise, it extracts only the files or directories corresponding to the specified arguments.
