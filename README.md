@@ -15,6 +15,18 @@
   -l    list
   -o    extract to stdout
   -x    extract</pre>
+
+
+   1. Create tarball (-c or create): Allows creating a new tarball from a list of files or directories passed as arguments. It also supports the use of wildcards to specify a set of files to include in the tarball.
+
+   2. Extract tarball (-x or extract): Allows extracting the contents of a tarball. If no file or directory is specified as an argument, it extracts the entire content of the tarball. Otherwise, it extracts only the files or directories corresponding to the specified arguments.
+
+   3. Extract to stdout (-o or extract to stdout): Allows extracting the content of the tarball directly to the standard output (stdout). Again, if no file or directory is specified as an argument, it extracts the entire content of the tarball to stdout.
+
+   4. List tarball content (-l or list): Allows listing the content of the tarball without extracting the files. It displays the names of all files and directories present in the tarball.
+
+   5. Remove files from tarball (-d or delete): Allows removing specific files from the tarball. The names of the files to be removed are passed as arguments.
+    
 ## License
 
 This project is licensed under the MIT License.
