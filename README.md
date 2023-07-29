@@ -6,7 +6,7 @@
 [![GitHub go.mod Go version](https://img.shields.io/github/go-mod/go-version/pedroalbanese/tar)](https://golang.org)
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/pedroalbanese/tar)](https://github.com/pedroalbanese/tar/releases)
 ###  Minimalist Tar Implementation written in Go
-Tarballs are compressed archive files commonly used in Unix-like operating systems to group multiple files and directories into a single file for easy storage, transport, and distribution.
+Tarballs are archive files commonly used in Unix-like operating systems to group multiple files and directories into a single file for easy storage, transport, and distribution.
 
 ### Usage
 <pre>Usage for tar: tar [-x|o] [-c|a] [-d|l] [-f file] [files ...]
