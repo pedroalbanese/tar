@@ -22,7 +22,6 @@ var (
 	list        = flag.Bool("l", false, "list")
 	stdout      = flag.Bool("o", false, "extract to stdout")
 	tfile       = flag.String("f", "", "tar file ('-' for stdin)")
-	extractFile = flag.String("extract-file", "", "extract only the specified file from the tarball")
 
 	tw *tar.Writer
 	tr *tar.Reader
