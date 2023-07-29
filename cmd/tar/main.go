@@ -1,4 +1,3 @@
-// From https://github.com/howeyc/gobox/blob/master/src/applets/tar/tar.go
 package main
 
 import (
@@ -139,71 +138,46 @@ func main() {
 		}
 		tr := tar.NewReader(ifile)
 
-		for {
-			hdr, err := tr.Next()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				log.Fatalln(err)
-			}
+		if *stdout == false {
+			for {
+				hdr, err := tr.Next()
+				if err == io.EOF {
+					break
 
-			if *stdout {
-				if _, err := io.Copy(os.Stdout, tr); err != nil {
-					log.Fatal(err)
 				}
-			} else {
-				destPath := hdr.Name
-				if *extract && strings.HasSuffix(hdr.Name, "/") {
-					destPath = path.Join(hdr.Name, path.Base(hdr.Name))
-				}
+				if err != nil {
+					log.Fatalln(err)
 
+				}
 				fi := hdr.FileInfo()
 				if fi.IsDir() {
-					os.MkdirAll(destPath, 0755)
+					os.MkdirAll(hdr.Name, 0755)
 				} else {
-					os.MkdirAll(filepath.Dir(destPath), 0755)
-					ofile, _ := os.Create(destPath)
+					os.MkdirAll(filepath.Dir(hdr.Name), 0755)
+					ofile, _ := os.Create(hdr.Name)
 					io.Copy(ofile, tr)
-					ofile.Close()
 				}
-
-				if fi.IsDir() && *extract {
-					tr := tar.NewReader(ifile)
-					for {
-						hdr, err := tr.Next()
-						if err == io.EOF {
-							break
-						}
-						if err != nil {
-							log.Fatalln(err)
-						}
-
-						if strings.HasPrefix(hdr.Name, destPath+"/") {
-							extractDestPath := hdr.Name
-							extractDestPath = strings.TrimPrefix(extractDestPath, destPath+"/")
-							extractDestPath = path.Join(destPath, extractDestPath)
-
-							fi := hdr.FileInfo()
-							if fi.IsDir() {
-								os.MkdirAll(extractDestPath, 0755)
-							} else {
-								os.MkdirAll(filepath.Dir(extractDestPath), 0755)
-								ofile, _ := os.Create(extractDestPath)
-								io.Copy(ofile, tr)
-								ofile.Close()
-							}
-						}
-					}
-				}
-
-				fmt.Println(destPath)
+				fmt.Println(hdr.Name)
 			}
 		}
-		return
-	}
 
-	if *append {
+		if *stdout {
+			for {
+				_, err := tr.Next()
+				if err == io.EOF {
+					break
+
+				}
+				if _, err := io.Copy(os.Stdout, tr); err != nil {
+
+					log.Fatal(err)
+
+				}
+				fmt.Print()
+			}
+		}
+
+	} else if *append {
 		if _, err := os.Stat(*tfile); err == nil {
 			ofile, err := os.OpenFile(*tfile, os.O_RDWR, os.ModePerm)
 			if err != nil {
