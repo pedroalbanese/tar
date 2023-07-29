@@ -10,17 +10,20 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 )
 
 var (
-	append  = flag.Bool("a", false, "append instead of overwrite")
-	delete  = flag.Bool("d", false, "delete files from tarball")
-	create  = flag.Bool("c", false, "create")
-	extract = flag.Bool("x", false, "extract")
-	list    = flag.Bool("l", false, "list")
-	stdout  = flag.Bool("o", false, "extract to stdout")
-	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
+	append      = flag.Bool("a", false, "append instead of overwrite")
+	delete      = flag.Bool("d", false, "delete files from tarball")
+	create      = flag.Bool("c", false, "create")
+	extract     = flag.Bool("x", false, "extract")
+	list        = flag.Bool("l", false, "list")
+	stdout      = flag.Bool("o", false, "extract to stdout")
+	tfile       = flag.String("f", "", "tar file ('-' for stdin)")
+	extractFile = flag.String("extract-file", "", "extract only the specified file from the tarball")
 
 	tw *tar.Writer
 	tr *tar.Reader
@@ -45,7 +48,7 @@ func main() {
 	flag.Parse()
 
 	if *tfile == "" {
-		fmt.Printf("Usage for %[1]s: %[1]s [-x|o] [-c|a] [-d] [-f file] [files ...]\n", "tar")
+		fmt.Printf("Usage for %[1]s: %[1]s [-x|o] [-c|a|d] [-f file] [files ...]\n", "tar")
 		flag.PrintDefaults()
 	}
 
@@ -74,7 +77,7 @@ func main() {
 		}
 	}
 
-	if *extract || *stdout {
+	if (*extract || *stdout) && len(flag.Args()) > 0 {
 		var ifile io.Reader
 		if *tfile == "-" {
 			ifile = os.Stdin
@@ -83,46 +86,124 @@ func main() {
 		}
 		tr := tar.NewReader(ifile)
 
-		if *stdout == false {
-			for {
-				hdr, err := tr.Next()
-				if err == io.EOF {
-					break
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatalln(err)
+			}
 
-				}
+			for _, arg := range flag.Args() {
+				matched, err := filepath.Match(arg, hdr.Name)
 				if err != nil {
-					log.Fatalln(err)
-
+					log.Fatal(err)
 				}
+
+				if matched {
+					if *stdout {
+						if _, err := io.Copy(os.Stdout, tr); err != nil {
+							log.Fatal(err)
+						}
+					} else {
+						destPath := hdr.Name
+						if strings.HasSuffix(arg, "/") {
+							destPath = path.Join(arg, path.Base(hdr.Name))
+						}
+
+						fi := hdr.FileInfo()
+						if fi.IsDir() {
+							os.MkdirAll(destPath, 0755)
+						} else {
+							os.MkdirAll(filepath.Dir(destPath), 0755)
+							ofile, _ := os.Create(destPath)
+							io.Copy(ofile, tr)
+							ofile.Close()
+						}
+						fmt.Println(destPath)
+					}
+				}
+			}
+		}
+
+		return
+	}
+
+	if (*extract || *stdout) && len(flag.Args()) == 0 {
+		var ifile io.Reader
+		if *tfile == "-" {
+			ifile = os.Stdin
+		} else {
+			ifile, _ = os.Open(*tfile)
+		}
+		tr := tar.NewReader(ifile)
+
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatalln(err)
+			}
+
+			if *stdout {
+				if _, err := io.Copy(os.Stdout, tr); err != nil {
+					log.Fatal(err)
+				}
+			} else {
+				destPath := hdr.Name
+				if *extract && strings.HasSuffix(hdr.Name, "/") {
+					destPath = path.Join(hdr.Name, path.Base(hdr.Name))
+				}
+
 				fi := hdr.FileInfo()
 				if fi.IsDir() {
-					os.MkdirAll(hdr.Name, 0755)
+					os.MkdirAll(destPath, 0755)
 				} else {
-					os.MkdirAll(filepath.Dir(hdr.Name), 0755)
-					ofile, _ := os.Create(hdr.Name)
+					os.MkdirAll(filepath.Dir(destPath), 0755)
+					ofile, _ := os.Create(destPath)
 					io.Copy(ofile, tr)
+					ofile.Close()
 				}
-				fmt.Println(hdr.Name)
+
+				if fi.IsDir() && *extract {
+					tr := tar.NewReader(ifile)
+					for {
+						hdr, err := tr.Next()
+						if err == io.EOF {
+							break
+						}
+						if err != nil {
+							log.Fatalln(err)
+						}
+
+						if strings.HasPrefix(hdr.Name, destPath+"/") {
+							extractDestPath := hdr.Name
+							extractDestPath = strings.TrimPrefix(extractDestPath, destPath+"/")
+							extractDestPath = path.Join(destPath, extractDestPath)
+
+							fi := hdr.FileInfo()
+							if fi.IsDir() {
+								os.MkdirAll(extractDestPath, 0755)
+							} else {
+								os.MkdirAll(filepath.Dir(extractDestPath), 0755)
+								ofile, _ := os.Create(extractDestPath)
+								io.Copy(ofile, tr)
+								ofile.Close()
+							}
+						}
+					}
+				}
+
+				fmt.Println(destPath)
 			}
 		}
+		return
+	}
 
-		if *stdout {
-			for {
-				_, err := tr.Next()
-				if err == io.EOF {
-					break
-
-				}
-				if _, err := io.Copy(os.Stdout, tr); err != nil {
-
-					log.Fatal(err)
-
-				}
-				fmt.Print()
-			}
-		}
-
-	} else if *append {
+	if *append {
 		if _, err := os.Stat(*tfile); err == nil {
 			ofile, err := os.OpenFile(*tfile, os.O_RDWR, os.ModePerm)
 			if err != nil {
@@ -145,19 +226,34 @@ func main() {
 		if *tfile == "-" {
 			tw = tar.NewWriter(os.Stdout)
 			for _, incpath := range flag.Args() {
-				filepath.Walk(incpath, walkpath)
+				files, err := filepath.Glob(incpath)
+				if err != nil {
+					fmt.Println("Error getting files matching pattern:", err)
+					return
+				}
+				for _, file := range files {
+					filepath.Walk(file, walkpath)
+				}
 			}
 			tw.Close()
 		} else {
 			ofile, _ := os.Create(*tfile)
 			tw = tar.NewWriter(ofile)
 			for _, incpath := range flag.Args() {
-				filepath.Walk(incpath, walkpath)
+				files, err := filepath.Glob(incpath)
+				if err != nil {
+					fmt.Println("Error getting files matching pattern:", err)
+					return
+				}
+				for _, file := range files {
+					filepath.Walk(file, walkpath)
+				}
 			}
 			tw.Close()
 			ofile.Close()
 		}
 	}
+
 }
 
 func deleteFromTarball(tarballPath string, filesToDelete []string) error {
@@ -171,9 +267,11 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	if err != nil {
 		return fmt.Errorf("Error reading the content of the tarball: %s", err)
 	}
+
 	if err := tarballFile.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball file: %s", err)
 	}
+
 	newTarballFile, err := os.Create(tarballPath)
 	if err != nil {
 		return fmt.Errorf("Error creating the new tarball file: %s", err)
@@ -181,6 +279,7 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	defer newTarballFile.Close()
 
 	tw := tar.NewWriter(newTarballFile)
+
 	tr := tar.NewReader(bytes.NewReader(tarballData))
 
 	for {
@@ -191,6 +290,7 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 		if err != nil {
 			return fmt.Errorf("Error reading the tarball header: %s", err)
 		}
+
 		deleteFile := false
 		for _, fileToDelete := range filesToDelete {
 			if header.Name == fileToDelete {
@@ -198,6 +298,7 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 				break
 			}
 		}
+
 		if !deleteFile {
 			if err := tw.WriteHeader(header); err != nil {
 				return fmt.Errorf("Error writing the file header to the new tarball: %s", err)
@@ -207,8 +308,10 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 			}
 		}
 	}
+
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball writer: %s", err)
 	}
+
 	return nil
 }
