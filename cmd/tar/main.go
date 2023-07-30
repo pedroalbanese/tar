@@ -20,17 +20,14 @@ var (
 	create  = flag.Bool("c", false, "create")
 	delete  = flag.Bool("d", false, "delete files from tarball")
 	extract = flag.Bool("x", false, "extract")
-	list    = flag.Bool("l", false, "list")
-	tstamp  = flag.Bool("t", false, "timestamp")
 	fstats  = flag.Bool("s", false, "stats")
+	list    = flag.Bool("l", false, "list")
 	stdout  = flag.Bool("o", false, "extract to stdout")
 	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
 
 	tw *tar.Writer
 	tr *tar.Reader
 )
-
-var fileMap = make(map[string]int)
 
 func addNumericSuffix(filename string) string {
 	ext := filepath.Ext(filename)
@@ -96,7 +93,7 @@ func main() {
 		}
 	}
 
-	if *list || *tstamp {
+	if *list {
 		var ifile io.Reader
 		if *tfile == "-" {
 			ifile = os.Stdin
@@ -134,13 +131,8 @@ func main() {
 			if sizeValue == float64(int64(sizeValue)) {
 				sizeFormat = "%.0f %s"
 			}
-
-			if *tstamp {
-				modTime := hdr.ModTime.Format("2006-01-02 15:04:05")
-				fmt.Printf("%s %s %s ("+sizeFormat+")\n", hdr.FileInfo().Mode(), modTime, hdr.Name, sizeValue, size)
-			} else {
-				fmt.Printf("%s %s ("+sizeFormat+")\n", hdr.FileInfo().Mode(), hdr.Name, sizeValue, size)
-			}
+			modTime := hdr.ModTime.Format("2006-01-02 15:04:05")
+			fmt.Printf("%s %s %s ("+sizeFormat+")\n", hdr.FileInfo().Mode(), modTime, hdr.Name, sizeValue, size)
 		}
 	}
 
@@ -381,12 +373,12 @@ func stats(tarballPath string) error {
 		}
 	}
 
-	fmt.Printf("Statistics for tarball: %s\n", tarballPath)
-	fmt.Printf("Total files: %d\n", fileCount)
-	fmt.Printf("Total directories: %d\n", dirCount)
-	fmt.Printf("Total symbolic links: %d\n", symlinkCount)
-	fmt.Printf("Total other entries: %d\n", otherCount)
-	fmt.Printf("Total size: %d bytes\n", totalSize)
+	fmt.Printf("Statistics for tarball : %s\n", tarballPath)
+	fmt.Printf("Total files            : %d\n", fileCount)
+	fmt.Printf("Total directories      : %d\n", dirCount)
+	fmt.Printf("Total symbolic links   : %d\n", symlinkCount)
+	fmt.Printf("Total other entries    : %d\n", otherCount)
+	fmt.Printf("Total size             : %d bytes\n", totalSize)
 
 	return nil
 }
