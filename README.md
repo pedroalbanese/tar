@@ -17,6 +17,7 @@ Tarballs are archive files commonly used in Unix-like operating systems to group
         tar file ('-' for stdin)
   -l    list
   -o    extract to stdout
+  -s    stats
   -x    extract</pre>
 
 ### Features
