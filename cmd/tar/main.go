@@ -11,15 +11,17 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 var (
 	append  = flag.Bool("a", false, "append instead of overwrite")
-	delete  = flag.Bool("d", false, "delete files from tarball")
 	create  = flag.Bool("c", false, "create")
+	delete  = flag.Bool("d", false, "delete files from tarball")
 	extract = flag.Bool("x", false, "extract")
 	list    = flag.Bool("l", false, "list")
+	tstamp  = flag.Bool("t", false, "timestamp")
 	stdout  = flag.Bool("o", false, "extract to stdout")
 	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
 
@@ -27,12 +29,48 @@ var (
 	tr *tar.Reader
 )
 
+var fileMap = make(map[string]int)
+
+func addNumericSuffix(filename string) string {
+	ext := filepath.Ext(filename)
+	name := filename[:len(filename)-len(ext)]
+
+	count := 0
+	newName := filename
+	for {
+		duplicate, _ := findDuplicateFile(newName)
+		if !duplicate {
+			break
+		}
+		count++
+		newName = fmt.Sprintf("%s_%d%s", name, count, ext)
+	}
+
+	return newName
+}
+
 func walkpath(path string, f os.FileInfo, err error) error {
 	header, err := tar.FileInfoHeader(f, "")
 	if err != nil {
 		log.Fatal(path + " not found. Process aborted.")
 	}
 	header.Name = path
+	if *append && tw != nil {
+		duplicate, dupErr := findDuplicateFile(header.Name)
+		if dupErr == nil && duplicate {
+			fmt.Printf("File with the same name already exists in the tarball: %s\n", header.Name)
+			fmt.Printf("Do you want to append it? (y/n): ")
+			var response string
+			fmt.Scanln(&response)
+			if strings.ToLower(response) != "y" {
+				fmt.Printf("Skipping file: %s\n", header.Name)
+				return nil
+			}
+			newName := addNumericSuffix(header.Name)
+			header.Name = newName
+			fmt.Printf("Duplicated file renamed to: %s\n", header.Name)
+		}
+	}
 	tw.WriteHeader(header)
 	ifile, _ := os.Open(path)
 	io.Copy(tw, ifile)
@@ -50,7 +88,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	if *list {
+	if *list || *tstamp {
 		var ifile io.Reader
 		if *tfile == "-" {
 			ifile = os.Stdin
@@ -89,7 +127,12 @@ func main() {
 				sizeFormat = "%.0f %s"
 			}
 
-			fmt.Printf("%s %s ("+sizeFormat+")\n", hdr.FileInfo().Mode(), hdr.Name, sizeValue, size)
+			if *tstamp {
+				modTime := hdr.ModTime.Format("2006-01-02 15:04:05")
+				fmt.Printf("%s %s %s ("+sizeFormat+")\n", hdr.FileInfo().Mode(), modTime, hdr.Name, sizeValue, size)
+			} else {
+				fmt.Printf("%s %s ("+sizeFormat+")\n", hdr.FileInfo().Mode(), hdr.Name, sizeValue, size)
+			}
 		}
 	}
 
@@ -211,9 +254,18 @@ func main() {
 				log.Fatalln(err)
 			}
 			tw = tar.NewWriter(ofile)
+
 			for _, incpath := range flag.Args() {
-				filepath.Walk(incpath, walkpath)
+				files, err := filepath.Glob(incpath)
+				if err != nil {
+					fmt.Println("Error getting files matching pattern:", err)
+					return
+				}
+				for _, file := range files {
+					filepath.Walk(file, walkpath)
+				}
 			}
+
 			tw.Close()
 			ofile.Close()
 		} else {
@@ -252,6 +304,41 @@ func main() {
 		}
 	}
 
+}
+
+func findDuplicateFile(filename string) (bool, error) {
+	tfile, err := os.Open(*tfile)
+	if err != nil {
+		return false, err
+	}
+	defer tfile.Close()
+
+	tr := tar.NewReader(tfile)
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false, err
+		}
+
+		if header.Name == filename {
+			return true, nil
+		}
+
+		ext := filepath.Ext(filename)
+		name := filename[:len(filename)-len(ext)]
+		if strings.HasPrefix(header.Name, name+"_") {
+			suffix := header.Name[len(name)+1 : len(header.Name)-len(ext)]
+			if _, err := strconv.Atoi(suffix); err == nil {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }
 
 func deleteFromTarball(tarballPath string, filesToDelete []string) error {
