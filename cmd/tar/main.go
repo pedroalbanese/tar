@@ -22,6 +22,7 @@ var (
 	extract = flag.Bool("x", false, "extract")
 	list    = flag.Bool("l", false, "list")
 	tstamp  = flag.Bool("t", false, "timestamp")
+	fstats  = flag.Bool("s", false, "stats")
 	stdout  = flag.Bool("o", false, "extract to stdout")
 	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
 
@@ -86,6 +87,13 @@ func main() {
 	if *tfile == "" {
 		fmt.Printf("Usage for %[1]s: %[1]s [-x|o] [-c|a] [-d|l] [-f file] [files ...]\n", "tar")
 		flag.PrintDefaults()
+	}
+
+	if *fstats {
+		err := stats(*tfile)
+		if err != nil {
+			log.Fatalf("Error while getting statistics: %s", err)
+		}
 	}
 
 	if *list || *tstamp {
@@ -233,12 +241,9 @@ func main() {
 				_, err := tr.Next()
 				if err == io.EOF {
 					break
-
 				}
 				if _, err := io.Copy(os.Stdout, tr); err != nil {
-
 					log.Fatal(err)
-
 				}
 				fmt.Print()
 			}
@@ -323,11 +328,9 @@ func findDuplicateFile(filename string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-
 		if header.Name == filename {
 			return true, nil
 		}
-
 		ext := filepath.Ext(filename)
 		name := filename[:len(filename)-len(ext)]
 		if strings.HasPrefix(header.Name, name+"_") {
@@ -341,6 +344,53 @@ func findDuplicateFile(filename string) (bool, error) {
 	return false, nil
 }
 
+func stats(tarballPath string) error {
+	tarballFile, err := os.Open(tarballPath)
+	if err != nil {
+		return fmt.Errorf("Error opening the tarball file: %s", err)
+	}
+	defer tarballFile.Close()
+
+	tr := tar.NewReader(tarballFile)
+
+	var totalSize int64
+	fileCount := 0
+	dirCount := 0
+	symlinkCount := 0
+	otherCount := 0
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("Error reading the tarball header: %s", err)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeReg:
+			fileCount++
+			totalSize += header.Size
+		case tar.TypeDir:
+			dirCount++
+		case tar.TypeSymlink:
+			symlinkCount++
+		default:
+			otherCount++
+		}
+	}
+
+	fmt.Printf("Statistics for tarball: %s\n", tarballPath)
+	fmt.Printf("Total files: %d\n", fileCount)
+	fmt.Printf("Total directories: %d\n", dirCount)
+	fmt.Printf("Total symbolic links: %d\n", symlinkCount)
+	fmt.Printf("Total other entries: %d\n", otherCount)
+	fmt.Printf("Total size: %d bytes\n", totalSize)
+
+	return nil
+}
+
 func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
 	if err != nil {
@@ -352,7 +402,6 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	if err != nil {
 		return fmt.Errorf("Error reading the content of the tarball: %s", err)
 	}
-
 	if err := tarballFile.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball file: %s", err)
 	}
@@ -380,7 +429,6 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 			if err != nil {
 				return fmt.Errorf("Error matching wildcard pattern: %s", err)
 			}
-
 			if matched {
 				deleteFile = true
 				break
@@ -408,11 +456,9 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 			if err != nil {
 				return fmt.Errorf("Error reading the tarball header: %s", err)
 			}
-
 			if strings.HasPrefix(header.Name, dirToDelete+"/") {
 				continue
 			}
-
 			if err := tw.WriteHeader(header); err != nil {
 				return fmt.Errorf("Error writing the file header to the new tarball: %s", err)
 			}
