@@ -32,7 +32,6 @@ var (
 func addNumericSuffix(filename string) string {
 	ext := filepath.Ext(filename)
 	name := filename[:len(filename)-len(ext)]
-
 	count := 0
 	newName := filename
 	for {
@@ -168,31 +167,37 @@ func main() {
 				}
 
 				if matched {
-					if *stdout {
-						if _, err := io.Copy(os.Stdout, tr); err != nil {
+					if hdr.FileInfo().IsDir() {
+						err := extractDir(tr, hdr.Name, *stdout)
+						if err != nil {
 							log.Fatal(err)
 						}
 					} else {
-						destPath := hdr.Name
-						if strings.HasSuffix(arg, "/") {
-							destPath = path.Join(arg, path.Base(hdr.Name))
-						}
-
-						fi := hdr.FileInfo()
-						if fi.IsDir() {
-							os.MkdirAll(destPath, 0755)
+						if *stdout {
+							if _, err := io.Copy(os.Stdout, tr); err != nil {
+								log.Fatal(err)
+							}
 						} else {
-							os.MkdirAll(filepath.Dir(destPath), 0755)
-							ofile, _ := os.Create(destPath)
-							io.Copy(ofile, tr)
-							ofile.Close()
+							destPath := hdr.Name
+							if strings.HasSuffix(arg, "/") {
+								destPath = path.Join(arg, path.Base(hdr.Name))
+							}
+
+							fi := hdr.FileInfo()
+							if fi.IsDir() {
+								os.MkdirAll(destPath, 0755)
+							} else {
+								os.MkdirAll(filepath.Dir(destPath), 0755)
+								ofile, _ := os.Create(destPath)
+								io.Copy(ofile, tr)
+								ofile.Close()
+							}
+							fmt.Println(destPath)
 						}
-						fmt.Println(destPath)
 					}
 				}
 			}
 		}
-
 		return
 	}
 
@@ -373,13 +378,68 @@ func stats(tarballPath string) error {
 		}
 	}
 
+	size := "bytes"
+	sizeValue := float64(totalSize)
+
+	if sizeValue >= 1024.0 {
+		size = "KB"
+		sizeValue = sizeValue / 1024.0
+	}
+	if sizeValue >= 1024.0 {
+		size = "MB"
+		sizeValue = sizeValue / 1024.0
+	}
+	if sizeValue >= 1024.0 {
+		size = "GB"
+		sizeValue = sizeValue / 1024.0
+	}
+	sizeFormat := "%.2f %s"
+	if sizeValue == float64(int64(sizeValue)) {
+		sizeFormat = "%.0f %s"
+	}
+
 	fmt.Printf("Statistics for tarball : %s\n", tarballPath)
 	fmt.Printf("Total files            : %d\n", fileCount)
 	fmt.Printf("Total directories      : %d\n", dirCount)
 	fmt.Printf("Total symbolic links   : %d\n", symlinkCount)
 	fmt.Printf("Total other entries    : %d\n", otherCount)
-	fmt.Printf("Total size             : %d bytes\n", totalSize)
+	fmt.Printf("Total size             : "+sizeFormat+"\n", sizeValue, size)
 
+	return nil
+}
+
+func extractDir(tr *tar.Reader, dirPath string, toStdout bool) error {
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("Error reading the tarball header: %s", err)
+		}
+
+		if strings.HasPrefix(hdr.Name, dirPath) {
+			destPath := hdr.Name
+			if strings.HasSuffix(dirPath, "/") {
+				destPath = path.Join(dirPath, path.Base(hdr.Name))
+			}
+
+			fi := hdr.FileInfo()
+			if fi.IsDir() {
+				os.MkdirAll(destPath, 0755)
+			} else if toStdout {
+				if _, err := io.Copy(os.Stdout, tr); err != nil {
+					return err
+				}
+			} else {
+				os.MkdirAll(filepath.Dir(destPath), 0755)
+				ofile, _ := os.Create(destPath)
+				io.Copy(ofile, tr)
+				ofile.Close()
+				fmt.Println(destPath)
+			}
+		}
+	}
 	return nil
 }
 
