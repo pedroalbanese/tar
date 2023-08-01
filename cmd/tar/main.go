@@ -24,6 +24,7 @@ var (
 	list    = flag.Bool("l", false, "list")
 	stdout  = flag.Bool("o", false, "extract to stdout")
 	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
+	update  = flag.Bool("u", false, "update tarball")
 
 	tw *tar.Writer
 	tr *tar.Reader
@@ -53,19 +54,22 @@ func walkpath(path string, f os.FileInfo, err error) error {
 	}
 	header.Name = path
 	if *append && tw != nil {
-		duplicate, dupErr := findDuplicateFile(header.Name)
-		if dupErr == nil && duplicate {
-			fmt.Printf("File with the same name already exists in the tarball: %s\n", header.Name)
-			fmt.Printf("Do you want to append it? (y/n): ")
-			var response string
-			fmt.Scanln(&response)
-			if strings.ToLower(response) != "y" {
-				fmt.Printf("Skipping file: %s\n", header.Name)
-				return nil
+		if f.IsDir() {
+		} else {
+			duplicate, dupErr := findDuplicateFile(header.Name)
+			if dupErr == nil && duplicate {
+				fmt.Printf("File with the same name already exists in the tarball: %s\n", header.Name)
+				fmt.Printf("Do you want to append it? (y/n): ")
+				var response string
+				fmt.Scanln(&response)
+				if strings.ToLower(response) != "y" {
+					fmt.Printf("Skipping file: %s\n", header.Name)
+					return nil
+				}
+				newName := addNumericSuffix(header.Name)
+				header.Name = newName
+				fmt.Printf("Duplicated file renamed to: %s\n", header.Name)
 			}
-			newName := addNumericSuffix(header.Name)
-			header.Name = newName
-			fmt.Printf("Duplicated file renamed to: %s\n", header.Name)
 		}
 	}
 	tw.WriteHeader(header)
@@ -140,6 +144,14 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error deleting files from tarball: %s", err)
 		}
+	}
+
+	if *update {
+		err := updateTarball(*tfile, flag.Args())
+		if err != nil {
+			log.Fatalf("Error updating tarball: %s", err)
+		}
+		return
 	}
 
 	if (*extract || *stdout) && len(flag.Args()) > 0 {
@@ -522,5 +534,97 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball writer: %s", err)
 	}
+	return nil
+}
+
+func updateTarball(tarballPath string, filesToAdd []string) error {
+	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("Error opening the tarball file: %s", err)
+	}
+	defer tarballFile.Close()
+
+	var updatedTarballData bytes.Buffer
+	tw := tar.NewWriter(&updatedTarballData)
+	tr := tar.NewReader(tarballFile)
+
+	existingFiles := make(map[string]bool)
+
+	for _, fileToAdd := range filesToAdd {
+		files, err := filepath.Glob(fileToAdd)
+		if err != nil {
+			fmt.Println("Error getting files matching pattern:", err)
+			continue
+		}
+		for _, file := range files {
+			filepath.Walk(file, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return fmt.Errorf("Error accessing file %s: %s", path, err)
+				}
+
+				header, err := tar.FileInfoHeader(info, "")
+				if err != nil {
+					return fmt.Errorf("Error creating tar header for %s: %s", path, err)
+				}
+				header.Name = path
+
+				if existingFiles[path] {
+					return nil
+				} else {
+					existingFiles[path] = true
+				}
+
+				if err := tw.WriteHeader(header); err != nil {
+					return fmt.Errorf("Error writing the file header to the updated tarball: %s", err)
+				}
+				if info.IsDir() {
+					return nil
+				}
+				fileToCopy, err := os.Open(path)
+				if err != nil {
+					return fmt.Errorf("Error opening the file %s: %s", path, err)
+				}
+				defer fileToCopy.Close()
+				if _, err := io.Copy(tw, fileToCopy); err != nil {
+					return fmt.Errorf("Error copying the file content to the updated tarball: %s", err)
+				}
+				fmt.Printf("Updated file: %s (%d bytes)\n", path, info.Size())
+
+				return nil
+			})
+		}
+	}
+
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("Error reading from the original tarball: %s", err)
+		}
+		if !existingFiles[header.Name] {
+			if err := tw.WriteHeader(header); err != nil {
+				return fmt.Errorf("Error writing the file header to the updated tarball: %s", err)
+			}
+			if _, err := io.Copy(tw, tr); err != nil {
+				return fmt.Errorf("Error copying the file content to the updated tarball: %s", err)
+			}
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("Error closing the tarball writer: %s", err)
+	}
+	if err := tarballFile.Truncate(0); err != nil {
+		return fmt.Errorf("Error truncating the tarball file: %s", err)
+	}
+	if _, err := tarballFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("Error seeking to the beginning of the tarball file: %s", err)
+	}
+	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
+		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
+	}
+
 	return nil
 }
