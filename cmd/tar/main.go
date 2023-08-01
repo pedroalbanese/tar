@@ -56,6 +56,7 @@ func walkpath(path string, f os.FileInfo, err error) error {
 	header.Name = path
 	if *appendf && tw != nil {
 		if f.IsDir() {
+			header.Name = strings.TrimSuffix(path, "/")
 		} else {
 			duplicate, dupErr := findDuplicateFile(header.Name)
 			if dupErr == nil && duplicate {
@@ -711,7 +712,7 @@ func reorganizeTarball(tarballPath string) error {
 			return fmt.Errorf("Error writing the file content to the updated tarball: %s", err)
 		}
 	}
-	
+
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball writer: %s", err)
 	}
