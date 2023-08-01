@@ -11,12 +11,13 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 var (
-	append  = flag.Bool("a", false, "append instead of overwrite")
+	appendf = flag.Bool("a", false, "append instead of overwrite")
 	create  = flag.Bool("c", false, "create")
 	delete  = flag.Bool("d", false, "delete files from tarball")
 	extract = flag.Bool("x", false, "extract")
@@ -53,7 +54,7 @@ func walkpath(path string, f os.FileInfo, err error) error {
 		log.Fatal(path + " not found. Process aborted.")
 	}
 	header.Name = path
-	if *append && tw != nil {
+	if *appendf && tw != nil {
 		if f.IsDir() {
 		} else {
 			duplicate, dupErr := findDuplicateFile(header.Name)
@@ -258,7 +259,7 @@ func main() {
 			}
 		}
 
-	} else if *append {
+	} else if *appendf {
 		if _, err := os.Stat(*tfile); err == nil {
 			ofile, err := os.OpenFile(*tfile, os.O_RDWR, os.ModePerm)
 			if err != nil {
@@ -284,6 +285,9 @@ func main() {
 			ofile.Close()
 		} else {
 			fmt.Fprintf(os.Stderr, "%s not found\n", *tfile)
+		}
+		if err := reorganizeTarball(*tfile); err != nil {
+			fmt.Println("Error:", err)
 		}
 
 	} else if *create {
@@ -613,6 +617,101 @@ func updateTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("Error closing the tarball writer: %s", err)
+	}
+	if err := tarballFile.Truncate(0); err != nil {
+		return fmt.Errorf("Error truncating the tarball file: %s", err)
+	}
+	if _, err := tarballFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("Error seeking to the beginning of the tarball file: %s", err)
+	}
+	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
+		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
+	}
+	if err := reorganizeTarball(tarballPath); err != nil {
+		fmt.Println("Error:", err)
+	}
+
+	return nil
+}
+
+type FileEntry struct {
+	Header  *tar.Header
+	Content []byte
+}
+
+func reorganizeTarball(tarballPath string) error {
+	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return fmt.Errorf("Error opening the tarball file: %s", err)
+	}
+	defer tarballFile.Close()
+
+	fileData := make(map[string]*FileEntry)
+	tr := tar.NewReader(tarballFile)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("Error reading from the original tarball: %s", err)
+		}
+
+		var fileContent []byte
+		if !header.FileInfo().IsDir() {
+			fileContent, err = io.ReadAll(tr)
+			if err != nil {
+				return fmt.Errorf("Error reading file content from the original tarball: %s", err)
+			}
+		}
+
+		fileData[header.Name] = &FileEntry{
+			Header:  header,
+			Content: fileContent,
+		}
+	}
+
+	var sortedFileNames []string
+	for fileName := range fileData {
+		sortedFileNames = append(sortedFileNames, fileName)
+	}
+	sort.Strings(sortedFileNames)
+
+	var updatedTarballData bytes.Buffer
+	tw := tar.NewWriter(&updatedTarballData)
+
+	for _, fileName := range sortedFileNames {
+		fileEntry := fileData[fileName]
+		header := &tar.Header{
+			Name:       fileName,
+			Mode:       fileEntry.Header.Mode,
+			Uid:        fileEntry.Header.Uid,
+			Gid:        fileEntry.Header.Gid,
+			Uname:      fileEntry.Header.Uname,
+			Gname:      fileEntry.Header.Gname,
+			ModTime:    fileEntry.Header.ModTime,
+			AccessTime: fileEntry.Header.AccessTime,
+			ChangeTime: fileEntry.Header.ChangeTime,
+		}
+		if fileEntry.Header.FileInfo().IsDir() {
+			header.Typeflag = tar.TypeDir
+			if err := tw.WriteHeader(header); err != nil {
+				return fmt.Errorf("Error writing the directory header to the updated tarball: %s", err)
+			}
+			continue
+		}
+
+		header.Size = int64(len(fileEntry.Content))
+		if err := tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("Error writing the file header to the updated tarball: %s", err)
+		}
+		if _, err := tw.Write(fileEntry.Content); err != nil {
+			return fmt.Errorf("Error writing the file content to the updated tarball: %s", err)
+		}
+	}
+	
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball writer: %s", err)
 	}
