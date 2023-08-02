@@ -32,6 +32,10 @@ Tarballs are archive files commonly used in Unix-like operating systems to group
 
    5. **Remove files from tarball** (`-d`): Allows removing specific files from the tarball. The names of the files to be removed are passed as arguments.
     
+   6. **Append to tarball** (`-a`): Allows adding new files or directories to an existing tarball.
+
+   7. **Update tarball** (`-u`): Allows updating existing files in the tarball with newer versions, if they already exist.
+
 ## License
 
 This project is licensed under the MIT License.
