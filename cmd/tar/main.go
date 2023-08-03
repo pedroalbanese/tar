@@ -17,15 +17,15 @@ import (
 )
 
 var (
-	appendf = flag.Bool("a", false, "append instead of overwrite")
-	create  = flag.Bool("c", false, "create")
+	appendf = flag.Bool("a", false, "append instead of overwrite; see also -c and -u")
+	create  = flag.Bool("c", false, "create; it will overwrite the original file")
 	delete  = flag.Bool("d", false, "delete files from tarball")
-	extract = flag.Bool("x", false, "extract")
+	extract = flag.Bool("x", false, "extract; see also -o")
 	fstats  = flag.Bool("s", false, "stats")
-	list    = flag.Bool("l", false, "list")
-	stdout  = flag.Bool("o", false, "extract to stdout")
-	tfile   = flag.String("f", "", "tar file ('-' for stdin)")
-	update  = flag.Bool("u", false, "update tarball")
+	list    = flag.Bool("l", false, "list contents of tarball")
+	stdout  = flag.Bool("o", false, "extract to stdout; see also -x")
+	tfile   = flag.String("f", "", "tar file ('-' for stdin/stdout)")
+	update  = flag.Bool("u", false, "update tarball; see also -c and -a")
 
 	tw *tar.Writer
 	tr *tar.Reader
@@ -44,7 +44,6 @@ func addNumericSuffix(filename string) string {
 		count++
 		newName = fmt.Sprintf("%s_%d%s", name, count, ext)
 	}
-
 	return newName
 }
 
@@ -322,7 +321,6 @@ func main() {
 			ofile.Close()
 		}
 	}
-
 }
 
 func findDuplicateFile(filename string) (bool, error) {
