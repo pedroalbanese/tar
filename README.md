@@ -15,7 +15,7 @@ Tarballs are archive files commonly used in Unix-like operating systems to group
   -d    delete files from tarball
   -f string
         tar file ('-' for stdin/stdout)
-  -l    list contents to tarball
+  -l    list contents of tarball
   -o    extract to stdout; see also -x
   -s    stats
   -u    update tarball; see also -c and -a
