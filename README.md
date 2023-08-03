@@ -10,16 +10,16 @@ Tarballs are archive files commonly used in Unix-like operating systems to group
 
 ### Usage
 <pre>Usage for tar: tar [-x|o] [-c|a] [-d|l] [-f file] [files ...]
-  -a    append instead of overwrite
-  -c    create
+  -a    append instead of overwrite; see also -c and -u
+  -c    create; it will overwrite the original file
   -d    delete files from tarball
   -f string
-        tar file ('-' for stdin)
-  -l    list
-  -o    extract to stdout
+        tar file ('-' for stdin/stdout)
+  -l    list contends fo tarball
+  -o    extract to stdout; see also -x
   -s    stats
-  -u    update tarball
-  -x    extract</pre>
+  -u    update tarball; see also -c and -a
+  -x    extract; see also -o</pre>
 
 ### Features
    1. **Create tarball** (`-c`): Allows creating a new tarball from a list of files or directories passed as arguments. It also supports the use of wildcards to specify a set of files to include in the tarball.
