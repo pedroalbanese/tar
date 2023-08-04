@@ -91,7 +91,7 @@ func main() {
 	}
 
 	if *fstats {
-		err := stats(*tfile)
+		err := stats(*tfile, *tfile == "-")
 		if err != nil {
 			log.Fatalf("Error while getting statistics: %s", err)
 		}
@@ -160,55 +160,89 @@ func main() {
 		if *tfile == "-" {
 			ifile = os.Stdin
 		} else {
-			ifile, _ = os.Open(*tfile)
-		}
-		tr := tar.NewReader(ifile)
-
-		for {
-			hdr, err := tr.Next()
-			if err == io.EOF {
-				break
-			}
+			var err error
+			ifile, err = os.Open(*tfile)
 			if err != nil {
 				log.Fatalln(err)
 			}
+		}
+		tr := tar.NewReader(ifile)
 
-			for _, arg := range flag.Args() {
-				matched, err := filepath.Match(arg, hdr.Name)
-				if err != nil {
-					log.Fatal(err)
-				}
+		for _, arg := range flag.Args() {
+			dirs, err := filepath.Glob(arg)
+			if err != nil {
+				log.Fatal(err)
+			}
+			if len(dirs) == 0 {
+				dirs = append(dirs, arg)
+			}
+			for _, dir := range dirs {
+				dirsToExtract := make(map[string]struct{})
+				dirsToExtract[dir] = struct{}{}
 
-				if matched {
-					if hdr.FileInfo().IsDir() {
-						err := extractDir(tr, hdr.Name, *stdout)
+				for {
+					hdr, err := tr.Next()
+					if err == io.EOF {
+						break
+					}
+					if err != nil {
+						log.Fatalln(err)
+					}
+
+					for dir := range dirsToExtract {
+						matched, err := filepath.Match(dir, hdr.Name)
 						if err != nil {
 							log.Fatal(err)
 						}
-					} else {
-						if *stdout {
-							if _, err := io.Copy(os.Stdout, tr); err != nil {
-								log.Fatal(err)
-							}
-						} else {
-							destPath := hdr.Name
-							if strings.HasSuffix(arg, "/") {
-								destPath = path.Join(arg, path.Base(hdr.Name))
-							}
-
-							fi := hdr.FileInfo()
-							if fi.IsDir() {
-								os.MkdirAll(destPath, 0755)
+						if matched {
+							if hdr.FileInfo().IsDir() {
+								err := extractDir(tr, hdr.Name, *stdout)
+								if err != nil {
+									log.Fatal(err)
+								}
 							} else {
-								os.MkdirAll(filepath.Dir(destPath), 0755)
-								ofile, _ := os.Create(destPath)
-								io.Copy(ofile, tr)
-								ofile.Close()
+								if *stdout {
+									if _, err := io.Copy(os.Stdout, tr); err != nil {
+										log.Fatal(err)
+									}
+								} else {
+									destPath := hdr.Name
+									if strings.HasSuffix(dir, "/") {
+										destPath = path.Join(dir, path.Base(hdr.Name))
+									}
+									fi := hdr.FileInfo()
+									if fi.IsDir() {
+										if err := os.MkdirAll(destPath, fi.Mode()); err != nil {
+											log.Fatal(err)
+										}
+									} else {
+										if err := os.MkdirAll(filepath.Dir(destPath), fi.Mode()); err != nil {
+											log.Fatal(err)
+										}
+										ofile, err := os.Create(destPath)
+										if err != nil {
+											log.Fatal(err)
+										}
+										if _, err := io.Copy(ofile, tr); err != nil {
+											log.Fatal(err)
+										}
+										ofile.Close()
+
+										if err := os.Chmod(destPath, fi.Mode()); err != nil {
+											log.Fatal(err)
+										}
+									}
+									fmt.Println(destPath)
+								}
 							}
-							fmt.Println(destPath)
 						}
 					}
 				}
+				_, err = ifile.(io.Seeker).Seek(0, io.SeekStart)
+				if err != nil {
+					log.Fatal(err)
+				}
+				tr = tar.NewReader(ifile)
 			}
 		}
 		return
@@ -219,7 +253,11 @@ func main() {
 		if *tfile == "-" {
 			ifile = os.Stdin
 		} else {
-			ifile, _ = os.Open(*tfile)
+			var err error
+			ifile, err = os.Open(*tfile)
+			if err != nil {
+				log.Fatalln(err)
+			}
 		}
 		tr := tar.NewReader(ifile)
 
@@ -228,21 +266,34 @@ func main() {
 				hdr, err := tr.Next()
 				if err == io.EOF {
 					break
-
 				}
 				if err != nil {
 					log.Fatalln(err)
-
 				}
 				fi := hdr.FileInfo()
 				if fi.IsDir() {
-					os.MkdirAll(hdr.Name, 0755)
+					if err := os.MkdirAll(hdr.Name, fi.Mode()); err != nil {
+						log.Fatalf("Error creating directory: %s", err)
+					}
 				} else {
-					os.MkdirAll(filepath.Dir(hdr.Name), 0755)
-					ofile, _ := os.Create(hdr.Name)
-					io.Copy(ofile, tr)
+					if err := os.MkdirAll(filepath.Dir(hdr.Name), fi.Mode()); err != nil {
+						log.Fatalf("Error creating directory: %s", err)
+					}
+					ofile, err := os.Create(hdr.Name)
+					if err != nil {
+						log.Fatalf("Error creating file: %s", err)
+					}
+					if _, err := io.Copy(ofile, tr); err != nil {
+						log.Fatal(err)
+					}
+					ofile.Close()
+
+					if err := os.Chmod(hdr.Name, fi.Mode()); err != nil {
+						log.Fatalf("Error setting permissions: %s", err)
+					}
+
+					fmt.Println(hdr.Name)
 				}
-				fmt.Println(hdr.Name)
 			}
 		}
 
@@ -255,7 +306,6 @@ func main() {
 				if _, err := io.Copy(os.Stdout, tr); err != nil {
 					log.Fatal(err)
 				}
-				fmt.Print()
 			}
 		}
 
@@ -356,10 +406,17 @@ func findDuplicateFile(filename string) (bool, error) {
 	return false, nil
 }
 
-func stats(tarballPath string) error {
-	tarballFile, err := os.Open(tarballPath)
-	if err != nil {
-		return fmt.Errorf("Error opening the tarball file: %s", err)
+func stats(tarballPath string, stdinInput bool) error {
+	var tarballFile io.ReadCloser
+	var err error
+
+	if stdinInput {
+		tarballFile = os.Stdin
+	} else {
+		tarballFile, err = os.Open(tarballPath)
+		if err != nil {
+			return fmt.Errorf("Error opening the tarball file: %s", err)
+		}
 	}
 	defer tarballFile.Close()
 
@@ -440,18 +497,35 @@ func extractDir(tr *tar.Reader, dirPath string, toStdout bool) error {
 			}
 
 			fi := hdr.FileInfo()
-			if fi.IsDir() {
-				os.MkdirAll(destPath, 0755)
+			if fi.IsDir() && !toStdout {
+				if err := os.MkdirAll(destPath, fi.Mode()); err != nil {
+					return fmt.Errorf("Error creating directory: %s", err)
+				}
 			} else if toStdout {
 				if _, err := io.Copy(os.Stdout, tr); err != nil {
 					return err
 				}
 			} else {
-				os.MkdirAll(filepath.Dir(destPath), 0755)
-				ofile, _ := os.Create(destPath)
-				io.Copy(ofile, tr)
+				if err := os.MkdirAll(filepath.Dir(destPath), fi.Mode()); err != nil {
+					return fmt.Errorf("Error creating directory: %s", err)
+				}
+				ofile, err := os.Create(destPath)
+				if err != nil {
+					return fmt.Errorf("Error creating file: %s", err)
+				}
+				if _, err := io.Copy(ofile, tr); err != nil {
+					ofile.Close()
+					return err
+				}
 				ofile.Close()
-				fmt.Println(destPath)
+
+				if err := os.Chmod(destPath, fi.Mode()); err != nil {
+					return fmt.Errorf("Error setting permissions: %s", err)
+				}
+
+				if !toStdout {
+					fmt.Println(destPath)
+				}
 			}
 		}
 	}
@@ -723,6 +797,6 @@ func reorganizeTarball(tarballPath string) error {
 	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
 		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
 	}
-
+	
 	return nil
 }
