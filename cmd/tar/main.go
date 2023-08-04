@@ -227,7 +227,6 @@ func main() {
 											log.Fatal(err)
 										}
 										ofile.Close()
-
 										if err := os.Chmod(destPath, fi.Mode()); err != nil {
 											log.Fatal(err)
 										}
@@ -797,6 +796,5 @@ func reorganizeTarball(tarballPath string) error {
 	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
 		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
 	}
-	
 	return nil
 }
