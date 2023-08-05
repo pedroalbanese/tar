@@ -704,7 +704,6 @@ func updateTarball(tarballPath string, filesToAdd []string) error {
 	if err := reorganizeTarball(tarballPath); err != nil {
 		fmt.Println("Error:", err)
 	}
-
 	return nil
 }
 
@@ -745,14 +744,10 @@ func reorganizeTarball(tarballPath string) error {
 		}
 	}
 
-	var sortedFileNames []string
-	for fileName := range fileData {
-		sortedFileNames = append(sortedFileNames, fileName)
-	}
-	sort.Strings(sortedFileNames)
-
 	var updatedTarballData bytes.Buffer
 	tw := tar.NewWriter(&updatedTarballData)
+
+	sortedFileNames := sortedKeys(fileData)
 
 	for _, fileName := range sortedFileNames {
 		fileEntry := fileData[fileName]
@@ -783,18 +778,39 @@ func reorganizeTarball(tarballPath string) error {
 			return fmt.Errorf("Error writing the file content to the updated tarball: %s", err)
 		}
 	}
-
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing the tarball writer: %s", err)
 	}
+
 	if err := tarballFile.Truncate(0); err != nil {
 		return fmt.Errorf("Error truncating the tarball file: %s", err)
 	}
+
 	if _, err := tarballFile.Seek(0, 0); err != nil {
 		return fmt.Errorf("Error seeking to the beginning of the tarball file: %s", err)
 	}
+
 	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
 		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
 	}
 	return nil
+}
+
+func sortedKeys(m map[string]*FileEntry) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.SliceStable(keys, func(i, j int) bool {
+		partsI := strings.Split(keys[i], string(os.PathSeparator))
+		partsJ := strings.Split(keys[j], string(os.PathSeparator))
+		for k := 0; k < len(partsI) && k < len(partsJ); k++ {
+			if partsI[k] == partsJ[k] {
+				continue
+			}
+			return partsI[k] < partsJ[k]
+		}
+		return len(partsI) < len(partsJ)
+	})
+	return keys
 }
