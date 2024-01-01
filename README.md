@@ -9,7 +9,7 @@
 Tarballs are archive files commonly used in Unix-like operating systems to group multiple files and directories into a single file for easy storage, transport, and distribution.
 
 ### Usage
-<pre>Usage for tar: tar [-x|o] [-c|a] [-d|l] [-f file] [files ...]
+<pre>Usage for tar: tar [OPTION] [-f file] [files ...]
   -a    append instead of overwrite; see also -c and -u
   -c    create; it will overwrite the original file
   -d    delete files from tarball
