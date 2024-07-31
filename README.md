@@ -40,4 +40,4 @@ Tarballs are archive files commonly used in Unix-like operating systems to group
 
 This project is licensed under the ISC License.
 
-**Copyright (c) 2021 Pedro Albanese <pedroalbanese@hotmail.com>**
+#### Copyright (c) 2020-2024 Pedro F. Albanese - ALBANESE Research Lab.
