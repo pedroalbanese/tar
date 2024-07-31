@@ -38,7 +38,6 @@ Tarballs are archive files commonly used in Unix-like operating systems to group
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the ISC License.
 
-**Copyright (c) 2015 Chris Howey <chris@howey.me>**  
 **Copyright (c) 2021 Pedro Albanese <pedroalbanese@hotmail.com>**
