@@ -3,10 +3,11 @@ package main
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path"
@@ -14,22 +15,153 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dsnet/compress/bzip2"
+	"github.com/klauspost/compress/s2"
+	"github.com/klauspost/compress/zstd"
+	"github.com/pedroalbanese/brotli"
+	"github.com/pedroalbanese/lzma"
+	"github.com/pedroalbanese/xz"
+	"github.com/pierrec/lz4/v4"
+	"rsc.io/getopt"
 )
 
 var (
-	appendf = flag.Bool("a", false, "append instead of overwrite; see also -c and -u")
-	create  = flag.Bool("c", false, "create; it will overwrite the original file")
-	delete  = flag.Bool("d", false, "delete files from tarball")
-	extract = flag.Bool("x", false, "extract; see also -o")
-	fstats  = flag.Bool("s", false, "stats")
-	list    = flag.Bool("l", false, "list contents of tarball")
-	stdout  = flag.Bool("o", false, "extract to stdout; see also -x")
-	tfile   = flag.String("f", "", "tar file ('-' for stdin/stdout)")
-	update  = flag.Bool("u", false, "update tarball; see also -c and -a")
+	algorithm = flag.String("A", "", "algorithm: gzip, bzip2, s2, lzma, lz4, xz, zstd, zlib or brotli")
+	appendf   = flag.Bool("a", false, "append instead of overwrite; see also -c and -u")
+	create    = flag.Bool("c", false, "create; it will overwrite the original file")
+	delete    = flag.Bool("d", false, "delete files from tarball")
+	extract   = flag.Bool("x", false, "extract; see also -o")
+	fstats    = flag.Bool("s", false, "stats")
+	help      = flag.Bool("h", false, "print this help message")
+	level     = flag.Int("L", 4, "compression level (1 = fastest, 9 = best)")
+	list      = flag.Bool("l", false, "list contents of tarball")
+	stdout    = flag.Bool("o", false, "extract to stdout; see also -x")
+	tfile     = flag.String("f", "", "tar file ('-' for stdin/stdout)")
+	update    = flag.Bool("u", false, "update tarball; see also -c and -a")
+	compress  = flag.Bool("z", false, "compress/decompress the tarball")
 
 	tw *tar.Writer
 	tr *tar.Reader
+	cw io.WriteCloser
+	cr io.Reader
 )
+
+func wrapCompressionWriter(w io.Writer, level, cores *int) (io.WriteCloser, error) {
+	var (
+		writer io.WriteCloser
+		err    error
+	)
+
+	switch *algorithm {
+	case "gzip":
+		writer, err = gzip.NewWriterLevel(w, *level)
+	case "zlib":
+		writer, err = zlib.NewWriterLevel(w, *level)
+	case "bzip2":
+		writer, err = bzip2.NewWriter(w, &bzip2.WriterConfig{Level: *level})
+	case "s2":
+		switch {
+		case *level <= 3:
+			writer = s2.NewWriter(w, s2.WriterBetterCompression())
+		case *level >= 7:
+			writer = s2.NewWriter(w, s2.WriterBestCompression())
+		default:
+			writer = s2.NewWriter(w)
+		}
+	case "zstd":
+		if *cores == 0 {
+			*cores = 32
+			
+		}
+		writer, err = zstd.NewWriter(w,
+			zstd.WithEncoderLevel(zstd.EncoderLevel(*level)),
+			zstd.WithEncoderConcurrency(*cores),
+		)
+	case "lzma":
+		writer = lzma.NewWriterLevel(w, *level)
+	case "lz4":
+		var lvl lz4.CompressionLevel
+		switch *level {
+		case 0:
+			lvl = lz4.Fast
+		case 1:
+			lvl = lz4.Level1
+		case 2:
+			lvl = lz4.Level2
+		case 3:
+			lvl = lz4.Level3
+		case 4:
+			lvl = lz4.Level4
+		case 5:
+			lvl = lz4.Level5
+		case 6:
+			lvl = lz4.Level6
+		case 7:
+			lvl = lz4.Level7
+		case 8:
+			lvl = lz4.Level8
+		case 9:
+			lvl = lz4.Level9
+		default:
+			lvl = lz4.Fast
+		}
+		zw := lz4.NewWriter(w)
+		options := []lz4.Option{
+			lz4.CompressionLevelOption(lvl),
+			lz4.ConcurrencyOption(*cores),
+		}
+		if err = zw.Apply(options...); err != nil {
+			return nil, err
+		}
+		writer = zw
+	case "xz":
+		writer, err = xz.NewWriter(w)
+	default:
+		writer = brotli.NewWriterLevel(w, *level)
+	}
+
+	return writer, err
+}
+
+func wrapCompressionReader(r io.Reader) (io.Reader, error) {
+	switch *algorithm {
+	case "gzip":
+		return gzip.NewReader(r)
+	case "zlib":
+		return zlib.NewReader(r)
+	case "brotli":
+		return brotli.NewReader(r), nil
+	case "bzip2":
+		reader, err := bzip2.NewReader(r, &bzip2.ReaderConfig{})
+		return reader, err
+	case "xz":
+		reader, err := xz.NewReader(r)
+		return reader, err
+	case "lzma":
+		reader := lzma.NewReader(r)
+		return reader, nil
+	case "lz4":
+		reader := lz4.NewReader(r)
+		return reader, nil
+	case "zstd":
+		reader, err := zstd.NewReader(r)
+		return reader, err
+	case "s2":
+		reader := s2.NewReader(r)
+		return reader, nil
+	default:
+		return nil, fmt.Errorf("unsupported compression algorithm: %s", *algorithm)
+	}
+}
+
+type nopWriteCloser struct {
+	io.Writer
+}
+
+func (n nopWriteCloser) Close() error {
+	return nil
+}
 
 func addNumericSuffix(filename string) string {
 	ext := filepath.Ext(filename)
@@ -83,13 +215,62 @@ func walkpath(path string, f os.FileInfo, err error) error {
 }
 
 func main() {
-	flag.Parse()
+	if *help {
+		getopt.PrintDefaults()
+	}
+	/*
+		// Alias short flags with their long counterparts.
+		getopt.Aliases(
+			"A", "algorithm",
+			"a", "append",
+			"c", "create",
+			"d", "delete",
+			"x", "extract",
+			"s", "stats",
+			"l", "list",
+			"o", "stdout",
+			"u", "update",
+			"z", "compress",
+			"h", "help",
+		)
+	*/
+	getopt.Parse()
 
-	if *tfile == "" {
-		fmt.Printf("Usage for %[1]s: %[1]s [-x|o] [-c|a] [-d|l] [-f file] [files ...]\n", "tar")
+	if *algorithm == "" && *tfile != "" && *tfile != "-" {
+		ext := strings.ToLower(filepath.Ext(*tfile))
+		switch ext {
+		case ".gz", ".tgz":
+			*algorithm = "gzip"
+		case ".zz", ".zlib":
+			*algorithm = "zlib"
+		case ".br":
+			*algorithm = "brotli"
+		case ".bz2":
+			*algorithm = "bzip2"
+		case ".xz":
+			*algorithm = "xz"
+		case ".lzma":
+			*algorithm = "lzma"
+		case ".lz4":
+			*algorithm = "lz4"
+		case ".zst", ".zstd":
+			*algorithm = "zstd"
+		case ".s2":
+			*algorithm = "s2"
+		default:
+			*algorithm = "none"
+		}
+		
+		if *algorithm != "none" {
+			*compress = true
+		}
+	}
+	
+	if len(os.Args) == 1 {
+		fmt.Printf("Usage for %[1]s: %[1]s [OPTION] [-f FILE] [FILES ...]\n", "tar")
 		flag.PrintDefaults()
 	}
-
+		
 	if *fstats {
 		err := stats(*tfile, *tfile == "-")
 		if err != nil {
@@ -103,6 +284,14 @@ func main() {
 			ifile = os.Stdin
 		} else {
 			ifile, _ = os.Open(*tfile)
+		}
+
+		if *compress {
+			cr, err := wrapCompressionReader(ifile)
+			if err != nil {
+				log.Fatalf("Compression error: %v", err)
+			}
+			ifile = cr
 		}
 
 		tr := tar.NewReader(ifile)
@@ -166,6 +355,15 @@ func main() {
 				log.Fatalln(err)
 			}
 		}
+
+		if *compress {
+			cr, err := wrapCompressionReader(ifile)
+			if err != nil {
+				log.Fatalf("Compression error: %v", err)
+			}
+			ifile = cr
+		}
+
 		tr := tar.NewReader(ifile)
 
 		for _, arg := range flag.Args() {
@@ -237,9 +435,13 @@ func main() {
 						}
 					}
 				}
-				_, err = ifile.(io.Seeker).Seek(0, io.SeekStart)
-				if err != nil {
-					log.Fatal(err)
+				if seeker, ok := ifile.(io.Seeker); ok {
+					_, err = seeker.Seek(0, io.SeekStart)
+					if err != nil {
+						log.Fatal(err)
+					}
+				} else {
+					log.Fatal("Cannot seek on input (possibly compressed stream)")
 				}
 				tr = tar.NewReader(ifile)
 			}
@@ -258,6 +460,15 @@ func main() {
 				log.Fatalln(err)
 			}
 		}
+
+		if *compress {
+			cr, err := wrapCompressionReader(ifile)
+			if err != nil {
+				log.Fatalf("Compression error: %v", err)
+			}
+			ifile = cr
+		}
+
 		tr := tar.NewReader(ifile)
 
 		if *stdout == false {
@@ -314,10 +525,21 @@ func main() {
 			if err != nil {
 				log.Fatalln(err)
 			}
-			if _, err = ofile.Seek(-1024, os.SEEK_END); err != nil {
+			defer ofile.Close()
+
+			var writer io.Writer = ofile
+			if *compress {
+				err := appendToCompressedTarball(*tfile, flag.Args())
+				if err != nil {
+					log.Fatalf("Error appending to compressed tarball: %v", err)
+				}
+				return
+			}
+
+			if _, err = ofile.Seek(-1024, io.SeekEnd); err != nil {
 				log.Fatalln(err)
 			}
-			tw = tar.NewWriter(ofile)
+			tw = tar.NewWriter(writer)
 
 			for _, incpath := range flag.Args() {
 				files, err := filepath.Glob(incpath)
@@ -331,45 +553,158 @@ func main() {
 			}
 
 			tw.Close()
-			ofile.Close()
+			if err := reorganizeTarball(*tfile); err != nil {
+				fmt.Println("Error:", err)
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "%s not found\n", *tfile)
 		}
-		if err := reorganizeTarball(*tfile); err != nil {
-			fmt.Println("Error:", err)
-		}
 
 	} else if *create {
+		var writer io.Writer
 		if *tfile == "-" {
-			tw = tar.NewWriter(os.Stdout)
-			for _, incpath := range flag.Args() {
-				files, err := filepath.Glob(incpath)
-				if err != nil {
-					fmt.Println("Error getting files matching pattern:", err)
-					return
-				}
-				for _, file := range files {
-					filepath.Walk(file, walkpath)
-				}
-			}
-			tw.Close()
+			writer = os.Stdout
 		} else {
-			ofile, _ := os.Create(*tfile)
-			tw = tar.NewWriter(ofile)
-			for _, incpath := range flag.Args() {
-				files, err := filepath.Glob(incpath)
-				if err != nil {
-					fmt.Println("Error getting files matching pattern:", err)
-					return
-				}
-				for _, file := range files {
-					filepath.Walk(file, walkpath)
-				}
+			ofile, err := os.Create(*tfile)
+			if err != nil {
+				log.Fatalf("Error creating file: %v", err)
 			}
-			tw.Close()
-			ofile.Close()
+			defer ofile.Close()
+			writer = ofile
+		}
+
+		if *compress {
+			level := *level
+			cores := 0
+			cw, err := wrapCompressionWriter(writer, &level, &cores)
+			if err != nil {
+				log.Fatalf("Compression error: %v", err)
+			}
+			defer cw.Close()
+			tw = tar.NewWriter(cw)
+		} else {
+			tw = tar.NewWriter(writer)
+		}
+
+		for _, incpath := range flag.Args() {
+			files, err := filepath.Glob(incpath)
+			if err != nil {
+				fmt.Println("Error getting files matching pattern:", err)
+				return
+			}
+			for _, file := range files {
+				filepath.Walk(file, walkpath)
+			}
+		}
+		tw.Close()
+		if cw != nil {
+			cw.Close()
 		}
 	}
+}
+
+func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
+	originalFile, err := os.Open(tarballPath)
+	if err != nil {
+		return fmt.Errorf("error opening existing tarball: %v", err)
+	}
+	defer originalFile.Close()
+
+	cr, err := wrapCompressionReader(originalFile)
+	if err != nil {
+		return fmt.Errorf("compression reader error: %v", err)
+	}
+	tr := tar.NewReader(cr)
+
+	var buffer bytes.Buffer
+	level := *level
+	cores := 0
+	cw, err := wrapCompressionWriter(&buffer, &level, &cores)
+	if err != nil {
+		return fmt.Errorf("compression writer error: %v", err)
+	}
+	tw := tar.NewWriter(cw)
+
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("error reading original tarball: %v", err)
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return fmt.Errorf("error writing header: %v", err)
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			return fmt.Errorf("error copying file data: %v", err)
+		}
+	}
+
+	for _, pattern := range filesToAdd {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return fmt.Errorf("error matching pattern %s: %v", pattern, err)
+		}
+		for _, match := range matches {
+			err := filepath.Walk(match, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				header, err := tar.FileInfoHeader(info, "")
+				if err != nil {
+					return fmt.Errorf("error creating header for %s: %v", path, err)
+				}
+
+				relPath, _ := filepath.Rel(".", path)
+				header.Name = filepath.ToSlash(relPath)
+
+				if err := tw.WriteHeader(header); err != nil {
+					return fmt.Errorf("error writing header for %s: %v", path, err)
+				}
+
+				if !info.IsDir() {
+					file, err := os.Open(path)
+					if err != nil {
+						return fmt.Errorf("error opening file %s: %v", path, err)
+					}
+					defer file.Close()
+
+					if _, err := io.Copy(tw, file); err != nil {
+						return fmt.Errorf("error writing file %s: %v", path, err)
+					}
+				}
+
+				fmt.Printf("Appended: %s (%d bytes)\n", header.Name, info.Size())
+				return nil
+			})
+
+			if err != nil {
+				return fmt.Errorf("error processing %s: %v", match, err)
+			}
+		}
+	}
+
+	if err := tw.Close(); err != nil {
+		return fmt.Errorf("error closing tar writer: %v", err)
+	}
+	if err := cw.Close(); err != nil {
+		return fmt.Errorf("error closing compression writer: %v", err)
+	}
+
+	if err := originalFile.Close(); err != nil {
+		return fmt.Errorf("error closing original tarball before overwrite: %v", err)
+	}
+	if err := os.WriteFile(tarballPath, buffer.Bytes(), 0644); err != nil {
+		return fmt.Errorf("error writing updated tarball: %v", err)
+	}
+
+	if err := reorganizeTarball(*tfile); err != nil {
+		fmt.Println("Error:", err)
+	}
+
+	return nil
 }
 
 func findDuplicateFile(filename string) (bool, error) {
@@ -419,7 +754,16 @@ func stats(tarballPath string, stdinInput bool) error {
 	}
 	defer tarballFile.Close()
 
-	tr := tar.NewReader(tarballFile)
+	var tr *tar.Reader
+	if *compress {
+		cr, err := wrapCompressionReader(tarballFile)
+		if err != nil {
+			log.Fatalf("Compression error: %v", err)
+		}
+		tr = tar.NewReader(cr)
+	} else {
+		tr = tar.NewReader(tarballFile)
+	}
 
 	var totalSize int64
 	fileCount := 0
@@ -534,26 +878,22 @@ func extractDir(tr *tar.Reader, dirPath string, toStdout bool) error {
 func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
 	if err != nil {
-		return fmt.Errorf("Error opening the Tarball file: %s", err)
+		return fmt.Errorf("error opening the tarball file: %s", err)
 	}
 	defer tarballFile.Close()
 
-	tarballData, err := ioutil.ReadAll(tarballFile)
-	if err != nil {
-		return fmt.Errorf("Error reading the content of the tarball: %s", err)
-	}
-	if err := tarballFile.Close(); err != nil {
-		return fmt.Errorf("Error closing the tarball file: %s", err)
+	var tr *tar.Reader
+	if *compress {
+		cr, err := wrapCompressionReader(tarballFile)
+		if err != nil {
+			return fmt.Errorf("error creating compression reader: %v", err)
+		}
+		tr = tar.NewReader(cr)
+	} else {
+		tr = tar.NewReader(tarballFile)
 	}
 
-	newTarballFile, err := os.Create(tarballPath)
-	if err != nil {
-		return fmt.Errorf("Error creating the new tarball file: %s", err)
-	}
-	defer newTarballFile.Close()
-
-	tw := tar.NewWriter(newTarballFile)
-	tr := tar.NewReader(bytes.NewReader(tarballData))
+	fileData := make(map[string]*FileEntry)
 
 	for {
 		header, err := tr.Next()
@@ -561,149 +901,254 @@ func deleteFromTarball(tarballPath string, filesToDelete []string) error {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("Error reading the tarball header: %s", err)
-		}
-		deleteFile := false
-		for _, fileToDelete := range filesToDelete {
-			matched, err := filepath.Match(fileToDelete, header.Name)
-			if err != nil {
-				return fmt.Errorf("Error matching wildcard pattern: %s", err)
-			}
-			if matched {
-				deleteFile = true
-				break
-			}
-		}
-		if !deleteFile {
-			if err := tw.WriteHeader(header); err != nil {
-				return fmt.Errorf("Error writing the file header to the new tarball: %s", err)
-			}
-			if _, err := io.Copy(tw, tr); err != nil {
-				return fmt.Errorf("Error copying the file content to the new tarball: %s", err)
-			}
-		}
-	}
-	for _, dirToDelete := range filesToDelete {
-		if strings.HasSuffix(dirToDelete, "/") {
-			dirToDelete = strings.TrimSuffix(dirToDelete, "/")
+			return fmt.Errorf("error reading from the tarball: %s", err)
 		}
 
-		for {
-			header, err := tr.Next()
-			if err == io.EOF {
+		shouldDelete := false
+		for _, pattern := range filesToDelete {
+			matched, _ := filepath.Match(pattern, header.Name)
+			if matched || strings.HasPrefix(header.Name, strings.TrimSuffix(pattern, "/")+"/") {
+				shouldDelete = true
 				break
 			}
+		}
+
+		if shouldDelete {
+			fmt.Printf("Deleted: %s\n", header.Name)
+			continue
+		}
+
+		var content []byte
+		if !header.FileInfo().IsDir() {
+			content, err = io.ReadAll(tr)
 			if err != nil {
-				return fmt.Errorf("Error reading the tarball header: %s", err)
+				return fmt.Errorf("error reading content for %s: %s", header.Name, err)
 			}
-			if strings.HasPrefix(header.Name, dirToDelete+"/") {
-				continue
-			}
-			if err := tw.WriteHeader(header); err != nil {
-				return fmt.Errorf("Error writing the file header to the new tarball: %s", err)
-			}
-			if _, err := io.Copy(tw, tr); err != nil {
-				return fmt.Errorf("Error copying the file content to the new tarball: %s", err)
+		}
+
+		fileData[header.Name] = &FileEntry{
+			Header:  header,
+			Content: content,
+		}
+	}
+
+	var buffer bytes.Buffer
+	var cw io.WriteCloser
+	var tw *tar.Writer
+
+	if *compress {
+		level := *level
+		cores := 0
+		cw, err = wrapCompressionWriter(&buffer, &level, &cores)
+		if err != nil {
+			return fmt.Errorf("error creating compression writer: %v", err)
+		}
+		tw = tar.NewWriter(cw)
+	} else {
+		tw = tar.NewWriter(&buffer)
+	}
+
+	sortedFileNames := sortedKeys(fileData)
+
+	for _, name := range sortedFileNames {
+		entry := fileData[name]
+		header := entry.Header
+
+		if !header.FileInfo().IsDir() {
+			header.Size = int64(len(entry.Content))
+		}
+
+		if err := tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("error writing header: %s", err)
+		}
+		if !header.FileInfo().IsDir() {
+			if _, err := tw.Write(entry.Content); err != nil {
+				return fmt.Errorf("error writing content for %s: %s", name, err)
 			}
 		}
 	}
+
 	if err := tw.Close(); err != nil {
-		return fmt.Errorf("Error closing the tarball writer: %s", err)
+		return fmt.Errorf("error closing tar writer: %s", err)
 	}
+	if cw != nil {
+		if err := cw.Close(); err != nil {
+			return fmt.Errorf("error closing compression writer: %s", err)
+		}
+	}
+
+	if err := tarballFile.Truncate(0); err != nil {
+		return fmt.Errorf("error truncating tarball file: %s", err)
+	}
+	if _, err := tarballFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("error seeking to start of tarball file: %s", err)
+	}
+	if _, err := buffer.WriteTo(tarballFile); err != nil {
+		return fmt.Errorf("error writing updated tarball: %s", err)
+	}
+
 	return nil
 }
 
 func updateTarball(tarballPath string, filesToAdd []string) error {
-	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
+	originalFile, err := os.OpenFile(tarballPath, os.O_RDWR, 0)
 	if err != nil {
-		return fmt.Errorf("Error opening the tarball file: %s", err)
+		return fmt.Errorf("Error opening original tarball: %s", err)
 	}
-	defer tarballFile.Close()
+	defer originalFile.Close()
 
-	var updatedTarballData bytes.Buffer
-	tw := tar.NewWriter(&updatedTarballData)
-	tr := tar.NewReader(tarballFile)
+	originalInfo, err := os.Stat(tarballPath)
+	if err != nil {
+		return fmt.Errorf("Error stating original tarball: %s", err)
+	}
+	originalMode := originalInfo.Mode()
 
-	existingFiles := make(map[string]bool)
-
-	for _, fileToAdd := range filesToAdd {
-		files, err := filepath.Glob(fileToAdd)
+	var tr *tar.Reader
+	if *compress {
+		cr, err := wrapCompressionReader(originalFile)
 		if err != nil {
-			fmt.Println("Error getting files matching pattern:", err)
-			continue
+			return fmt.Errorf("Error initializing compression reader: %v", err)
 		}
-		for _, file := range files {
-			filepath.Walk(file, func(path string, info os.FileInfo, err error) error {
-				if err != nil {
-					return fmt.Errorf("Error accessing file %s: %s", path, err)
-				}
-
-				header, err := tar.FileInfoHeader(info, "")
-				if err != nil {
-					return fmt.Errorf("Error creating tar header for %s: %s", path, err)
-				}
-				header.Name = path
-
-				if existingFiles[path] {
-					return nil
-				} else {
-					existingFiles[path] = true
-				}
-
-				if err := tw.WriteHeader(header); err != nil {
-					return fmt.Errorf("Error writing the file header to the updated tarball: %s", err)
-				}
-				if info.IsDir() {
-					return nil
-				}
-				fileToCopy, err := os.Open(path)
-				if err != nil {
-					return fmt.Errorf("Error opening the file %s: %s", path, err)
-				}
-				defer fileToCopy.Close()
-				if _, err := io.Copy(tw, fileToCopy); err != nil {
-					return fmt.Errorf("Error copying the file content to the updated tarball: %s", err)
-				}
-				fmt.Printf("Updated file: %s (%d bytes)\n", path, info.Size())
-
-				return nil
-			})
-		}
+		tr = tar.NewReader(cr)
+	} else {
+		tr = tar.NewReader(originalFile)
 	}
+
+	existingFiles := make(map[string]*FileEntry)
 
 	for {
-		header, err := tr.Next()
+		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("Error reading from the original tarball: %s", err)
+			return fmt.Errorf("Error reading tarball: %s", err)
 		}
-		if !existingFiles[header.Name] {
-			if err := tw.WriteHeader(header); err != nil {
-				return fmt.Errorf("Error writing the file header to the updated tarball: %s", err)
+
+		content := []byte{}
+		if !hdr.FileInfo().IsDir() {
+			content, err = io.ReadAll(tr)
+			if err != nil {
+				return fmt.Errorf("Error reading file content: %s", err)
 			}
-			if _, err := io.Copy(tw, tr); err != nil {
-				return fmt.Errorf("Error copying the file content to the updated tarball: %s", err)
+		}
+
+		existingFiles[hdr.Name] = &FileEntry{
+			Header:  hdr,
+			Content: content,
+		}
+	}
+
+	for _, pattern := range filesToAdd {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return fmt.Errorf("Error matching pattern %s: %s", pattern, err)
+		}
+
+		for _, match := range matches {
+			err := filepath.Walk(match, func(path string, info os.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+
+				header, err := tar.FileInfoHeader(info, "")
+				if err != nil {
+					return fmt.Errorf("Error creating header for %s: %s", path, err)
+				}
+
+				relPath, _ := filepath.Rel(".", path)
+				header.Name = filepath.ToSlash(relPath)
+
+				var content []byte
+				if !info.IsDir() {
+					file, err := os.Open(path)
+					if err != nil {
+						return fmt.Errorf("Error opening file %s: %s", path, err)
+					}
+					defer file.Close()
+
+					content, err = io.ReadAll(file)
+					if err != nil {
+						return fmt.Errorf("Error reading file %s: %s", path, err)
+					}
+				}
+
+				existingFiles[header.Name] = &FileEntry{
+					Header:  header,
+					Content: content,
+				}
+
+				fmt.Printf("Added or updated: %s (%d bytes)\n", header.Name, len(content))
+				return nil
+			})
+
+			if err != nil {
+				return fmt.Errorf("Error walking path %s: %s", match, err)
+			}
+		}
+	}
+
+	var updatedBuffer bytes.Buffer
+	var tw *tar.Writer
+	var compressionWriter io.WriteCloser
+
+	if *compress {
+		level := *level
+		cores := 0
+		cw, err := wrapCompressionWriter(&updatedBuffer, &level, &cores)
+		if err != nil {
+			return fmt.Errorf("Error initializing compression writer: %v", err)
+		}
+		defer cw.Close()
+		compressionWriter = cw
+		tw = tar.NewWriter(cw)
+	} else {
+		tw = tar.NewWriter(&updatedBuffer)
+	}
+	defer tw.Close()
+
+	sortedFileNames := sortedKeys(existingFiles)
+	for _, name := range sortedFileNames {
+		entry := existingFiles[name]
+		header := entry.Header
+		if !header.FileInfo().IsDir() {
+			header.Size = int64(len(entry.Content))
+		}
+		if err := tw.WriteHeader(header); err != nil {
+			return fmt.Errorf("Error writing header for %s: %s", name, err)
+		}
+		if !header.FileInfo().IsDir() {
+			if _, err := tw.Write(entry.Content); err != nil {
+				return fmt.Errorf("Error writing content for %s: %s", name, err)
 			}
 		}
 	}
 
 	if err := tw.Close(); err != nil {
-		return fmt.Errorf("Error closing the tarball writer: %s", err)
+		return fmt.Errorf("Error closing tar writer: %s", err)
 	}
-	if err := tarballFile.Truncate(0); err != nil {
-		return fmt.Errorf("Error truncating the tarball file: %s", err)
+	if compressionWriter != nil {
+		if err := compressionWriter.Close(); err != nil {
+			return fmt.Errorf("Error closing compression writer: %s", err)
+		}
 	}
-	if _, err := tarballFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("Error seeking to the beginning of the tarball file: %s", err)
+
+	if err := originalFile.Truncate(0); err != nil {
+		return fmt.Errorf("Error truncating tarball: %s", err)
 	}
-	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
-		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
+
+	if _, err := originalFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("Error seeking to beginning: %s", err)
 	}
-	if err := reorganizeTarball(tarballPath); err != nil {
-		fmt.Println("Error:", err)
+
+	if _, err := updatedBuffer.WriteTo(originalFile); err != nil {
+		return fmt.Errorf("Error writing updated tarball: %s", err)
 	}
+
+	if err := os.Chmod(tarballPath, originalMode); err != nil {
+		return fmt.Errorf("Error restoring permissions: %s", err)
+	}
+
 	return nil
 }
 
@@ -713,86 +1158,119 @@ type FileEntry struct {
 }
 
 func reorganizeTarball(tarballPath string) error {
-	tarballFile, err := os.OpenFile(tarballPath, os.O_RDWR, os.ModePerm)
+	originalFile, err := os.OpenFile(tarballPath, os.O_RDWR, 0)
 	if err != nil {
-		return fmt.Errorf("Error opening the tarball file: %s", err)
+		return fmt.Errorf("Error opening tarball: %s", err)
 	}
-	defer tarballFile.Close()
+	defer originalFile.Close()
+
+	originalInfo, err := os.Stat(tarballPath)
+	if err != nil {
+		return fmt.Errorf("Error stating original tarball: %s", err)
+	}
+	originalMode := originalInfo.Mode()
+
+	var tarReader *tar.Reader
+
+	if *compress {
+		cr, err := wrapCompressionReader(originalFile)
+		if err != nil {
+			return fmt.Errorf("Error initializing compression reader: %v", err)
+		}
+		tarReader = tar.NewReader(cr)
+	} else {
+		tarReader = tar.NewReader(originalFile)
+	}
 
 	fileData := make(map[string]*FileEntry)
-	tr := tar.NewReader(tarballFile)
+
 	for {
-		header, err := tr.Next()
+		header, err := tarReader.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("Error reading from the original tarball: %s", err)
+			return fmt.Errorf("Error reading tar entry: %s", err)
 		}
 
-		var fileContent []byte
+		var content []byte
 		if !header.FileInfo().IsDir() {
-			fileContent, err = io.ReadAll(tr)
+			content, err = io.ReadAll(tarReader)
 			if err != nil {
-				return fmt.Errorf("Error reading file content from the original tarball: %s", err)
+				return fmt.Errorf("Error reading content for %s: %s", header.Name, err)
 			}
 		}
 
 		fileData[header.Name] = &FileEntry{
 			Header:  header,
-			Content: fileContent,
+			Content: content,
 		}
 	}
 
-	var updatedTarballData bytes.Buffer
-	tw := tar.NewWriter(&updatedTarballData)
+	var updatedBuffer bytes.Buffer
+	var tw *tar.Writer
+	var compressionWriter io.WriteCloser
+
+	if *compress {
+		level := *level
+		cores := 0
+		cw, err := wrapCompressionWriter(&updatedBuffer, &level, &cores)
+		if err != nil {
+			return fmt.Errorf("Error initializing compression writer: %v", err)
+		}
+		defer cw.Close()
+		compressionWriter = cw
+		tw = tar.NewWriter(cw)
+	} else {
+		tw = tar.NewWriter(&updatedBuffer)
+	}
+	defer tw.Close()
 
 	sortedFileNames := sortedKeys(fileData)
+	for _, name := range sortedFileNames {
+		entry := fileData[name]
+		header := entry.Header
 
-	for _, fileName := range sortedFileNames {
-		fileEntry := fileData[fileName]
-		header := &tar.Header{
-			Name:       fileName,
-			Mode:       fileEntry.Header.Mode,
-			Uid:        fileEntry.Header.Uid,
-			Gid:        fileEntry.Header.Gid,
-			Uname:      fileEntry.Header.Uname,
-			Gname:      fileEntry.Header.Gname,
-			ModTime:    fileEntry.Header.ModTime,
-			AccessTime: fileEntry.Header.AccessTime,
-			ChangeTime: fileEntry.Header.ChangeTime,
-		}
-		if fileEntry.Header.FileInfo().IsDir() {
-			header.Typeflag = tar.TypeDir
-			if err := tw.WriteHeader(header); err != nil {
-				return fmt.Errorf("Error writing the directory header to the updated tarball: %s", err)
-			}
-			continue
+		if !header.FileInfo().IsDir() {
+			header.Size = int64(len(entry.Content))
 		}
 
-		header.Size = int64(len(fileEntry.Content))
 		if err := tw.WriteHeader(header); err != nil {
-			return fmt.Errorf("Error writing the file header to the updated tarball: %s", err)
+			return fmt.Errorf("Error writing header for %s: %s", name, err)
 		}
-		if _, err := tw.Write(fileEntry.Content); err != nil {
-			return fmt.Errorf("Error writing the file content to the updated tarball: %s", err)
+
+		if !header.FileInfo().IsDir() {
+			if _, err := tw.Write(entry.Content); err != nil {
+				return fmt.Errorf("Error writing content for %s: %s", name, err)
+			}
 		}
 	}
+
 	if err := tw.Close(); err != nil {
-		return fmt.Errorf("Error closing the tarball writer: %s", err)
+		return fmt.Errorf("Error closing tar writer: %s", err)
+	}
+	if compressionWriter != nil {
+		if err := compressionWriter.Close(); err != nil {
+			return fmt.Errorf("Error closing compression writer: %s", err)
+		}
 	}
 
-	if err := tarballFile.Truncate(0); err != nil {
-		return fmt.Errorf("Error truncating the tarball file: %s", err)
+	if err := originalFile.Truncate(0); err != nil {
+		return fmt.Errorf("Error truncating original tarball: %s", err)
 	}
 
-	if _, err := tarballFile.Seek(0, 0); err != nil {
-		return fmt.Errorf("Error seeking to the beginning of the tarball file: %s", err)
+	if _, err := originalFile.Seek(0, 0); err != nil {
+		return fmt.Errorf("Error seeking to beginning of file: %s", err)
 	}
 
-	if _, err := updatedTarballData.WriteTo(tarballFile); err != nil {
-		return fmt.Errorf("Error writing the updated tarball data to the original tarball file: %s", err)
+	if _, err := updatedBuffer.WriteTo(originalFile); err != nil {
+		return fmt.Errorf("Error writing updated tarball: %s", err)
 	}
+
+	if err := os.Chmod(tarballPath, originalMode); err != nil {
+		return fmt.Errorf("Error restoring permissions: %s", err)
+	}
+
 	return nil
 }
 
