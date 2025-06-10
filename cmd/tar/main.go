@@ -280,10 +280,14 @@ func main() {
 
 	if *list {
 		var ifile io.Reader
+		var err error
 		if *tfile == "-" {
 			ifile = os.Stdin
 		} else {
-			ifile, _ = os.Open(*tfile)
+			ifile, err = os.Open(*tfile)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 
 		if *compress {
