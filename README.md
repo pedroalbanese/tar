@@ -9,17 +9,23 @@
 Tarballs are archive files commonly used in Unix-like operating systems to group multiple files and directories into a single file for easy storage, transport, and distribution.
 
 ### Usage
-<pre>Usage for tar: tar [OPTION] [-f file] [files ...]
+<pre>Usage for tar: tar [OPTION] [-f FILE] [FILES ...]
+  -A string
+        algorithm: gzip, bzip2, s2, lzma, lz4, xz, zstd, zlib or brotli
+  -L int
+        compression level (1 = fastest, 9 = best) (default 4)
   -a    append instead of overwrite; see also -c and -u
   -c    create; it will overwrite the original file
   -d    delete files from tarball
   -f string
         tar file ('-' for stdin/stdout)
+  -h    print this help message
   -l    list contents of tarball
   -o    extract to stdout; see also -x
   -s    stats
   -u    update tarball; see also -c and -a
-  -x    extract; see also -o</pre>
+  -x    extract; see also -o
+  -z    compress/decompress the tarball</pre>
 
 ### Features
    1. **Create tarball** (`-c`): Allows creating a new tarball from a list of files or directories passed as arguments. It also supports the use of wildcards to specify a set of files to include in the tarball.
