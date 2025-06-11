@@ -358,11 +358,6 @@ func main() {
 			if err != nil {
 				log.Fatalln(err)
 			}
-			defer func() {
-				if f, ok := ifile.(*os.File); ok {
-					f.Close()
-				}
-			}()
 		}
 
 		if *compress {
@@ -372,7 +367,7 @@ func main() {
 			}
 			ifile = cr
 		}
-
+		
 		targets := make(map[string]struct{})
 		for _, arg := range flag.Args() {
 			matches, err := filepath.Glob(arg)
@@ -387,7 +382,7 @@ func main() {
 				}
 			}
 		}
-
+		
 		tr := tar.NewReader(ifile)
 
 		for {
