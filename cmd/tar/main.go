@@ -400,13 +400,13 @@ func main() {
 			}
 
 			for pattern := range targets {
-				matched, err := filepath.Match(pattern, hdr.Name)
+				matched, err := filepath.Match(pattern, filepath.FromSlash(hdr.Name))
 				if err != nil {
 					log.Fatal(err)
 				}
 				if matched {
 					fi := hdr.FileInfo()
-					destPath := hdr.Name
+					destPath := filepath.FromSlash(hdr.Name)
 
 					if fi.IsDir() {
 						if err := os.MkdirAll(destPath, fi.Mode()); err != nil {
