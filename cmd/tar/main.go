@@ -358,6 +358,11 @@ func main() {
 			if err != nil {
 				log.Fatalln(err)
 			}
+			defer func() {
+				if f, ok := ifile.(*os.File); ok {
+					f.Close()
+				}
+			}()
 		}
 
 		if *compress {
@@ -368,89 +373,73 @@ func main() {
 			ifile = cr
 		}
 
-		tr := tar.NewReader(ifile)
-
+		targets := make(map[string]struct{})
 		for _, arg := range flag.Args() {
-			dirs, err := filepath.Glob(arg)
+			matches, err := filepath.Glob(arg)
 			if err != nil {
 				log.Fatal(err)
 			}
-			if len(dirs) == 0 {
-				dirs = append(dirs, arg)
+			if len(matches) == 0 {
+				targets[arg] = struct{}{}
+			} else {
+				for _, m := range matches {
+					targets[m] = struct{}{}
+				}
 			}
-			for _, dir := range dirs {
-				dirsToExtract := make(map[string]struct{})
-				dirsToExtract[dir] = struct{}{}
+		}
 
-				for {
-					hdr, err := tr.Next()
-					if err == io.EOF {
-						break
-					}
-					if err != nil {
-						log.Fatalln(err)
-					}
+		tr := tar.NewReader(ifile)
 
-					for dir := range dirsToExtract {
-						matched, err := filepath.Match(dir, hdr.Name)
-						if err != nil {
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			for pattern := range targets {
+				matched, err := filepath.Match(pattern, hdr.Name)
+				if err != nil {
+					log.Fatal(err)
+				}
+				if matched {
+					fi := hdr.FileInfo()
+					destPath := hdr.Name
+
+					if fi.IsDir() {
+						if err := os.MkdirAll(destPath, fi.Mode()); err != nil {
 							log.Fatal(err)
 						}
-						if matched {
-							if hdr.FileInfo().IsDir() {
-								err := extractDir(tr, hdr.Name, *stdout)
-								if err != nil {
-									log.Fatal(err)
-								}
-							} else {
-								if *stdout {
-									if _, err := io.Copy(os.Stdout, tr); err != nil {
-										log.Fatal(err)
-									}
-								} else {
-									destPath := hdr.Name
-									if strings.HasSuffix(dir, "/") {
-										destPath = path.Join(dir, path.Base(hdr.Name))
-									}
-									fi := hdr.FileInfo()
-									if fi.IsDir() {
-										if err := os.MkdirAll(destPath, fi.Mode()); err != nil {
-											log.Fatal(err)
-										}
-									} else {
-										if err := os.MkdirAll(filepath.Dir(destPath), fi.Mode()); err != nil {
-											log.Fatal(err)
-										}
-										ofile, err := os.Create(destPath)
-										if err != nil {
-											log.Fatal(err)
-										}
-										if _, err := io.Copy(ofile, tr); err != nil {
-											log.Fatal(err)
-										}
-										ofile.Close()
-										if err := os.Chmod(destPath, fi.Mode()); err != nil {
-											log.Fatal(err)
-										}
-									}
-									fmt.Println(destPath)
-								}
+					} else {
+						if !*stdout {
+							if err := os.MkdirAll(filepath.Dir(destPath), fi.Mode()); err != nil {
+								log.Fatal(err)
+							}
+							ofile, err := os.Create(destPath)
+							if err != nil {
+								log.Fatal(err)
+							}
+							if _, err := io.Copy(ofile, tr); err != nil {
+								log.Fatal(err)
+							}
+							ofile.Close()
+							if err := os.Chmod(destPath, fi.Mode()); err != nil {
+								log.Fatal(err)
+							}
+							fmt.Println(destPath)
+						} else {
+							if _, err := io.Copy(os.Stdout, tr); err != nil {
+								log.Fatal(err)
 							}
 						}
 					}
+
+					break
 				}
-				if seeker, ok := ifile.(io.Seeker); ok {
-					_, err = seeker.Seek(0, io.SeekStart)
-					if err != nil {
-						log.Fatal(err)
-					}
-				} else {
-					log.Fatal("Cannot seek on input (possibly compressed stream)")
-				}
-				tr = tar.NewReader(ifile)
 			}
 		}
-		return
 	}
 
 	if (*extract || *stdout) && len(flag.Args()) == 0 {
@@ -608,7 +597,6 @@ func main() {
 }
 
 func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
-	// Primeiro, ler todos os arquivos existentes no tarball
 	existingFiles := make(map[string]bool)
 
 	originalFile, err := os.Open(tarballPath)
@@ -634,7 +622,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		existingFiles[hdr.Name] = true
 	}
 
-	// Fechar e reabrir o arquivo original
 	originalFile.Close()
 	originalFile, err = os.Open(tarballPath)
 	if err != nil {
@@ -642,7 +629,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 	}
 	defer originalFile.Close()
 
-	// Criar buffer para o novo tarball
 	var buffer bytes.Buffer
 	level := *level
 	cores := 0
@@ -655,7 +641,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 	tw := tar.NewWriter(cw)
 	defer tw.Close()
 
-	// Copiar arquivos existentes
 	cr, err = wrapCompressionReader(originalFile)
 	if err != nil {
 		return fmt.Errorf("compression reader error: %v", err)
@@ -678,7 +663,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
-	// Função para gerar nome único
 	generateUniqueName := func(name string) string {
 		ext := filepath.Ext(name)
 		base := name[:len(name)-len(ext)]
@@ -693,7 +677,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
-	// Adicionar novos arquivos com verificação de duplicados
 	for _, pattern := range filesToAdd {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -717,7 +700,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 				}
 				header.Name = filepath.ToSlash(relPath)
 
-				// Verificar se arquivo já existe
 				if _, exists := existingFiles[header.Name]; exists {
 					fmt.Printf("File with the same name already exists in the tarball: %s\n", header.Name)
 					fmt.Printf("Do you want to append it? (y/n): ")
@@ -728,12 +710,10 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 						return nil
 					}
 
-					// Gerar novo nome único
 					header.Name = generateUniqueName(header.Name)
 					fmt.Printf("Duplicated file renamed to: %s\n", header.Name)
 				}
 
-				// Adicionar ao mapa de arquivos existentes
 				existingFiles[header.Name] = true
 
 				if err := tw.WriteHeader(header); err != nil {
@@ -762,7 +742,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
-	// Fechar escritores
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("error closing tar writer: %v", err)
 	}
@@ -770,7 +749,6 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		return fmt.Errorf("error closing compression writer: %v", err)
 	}
 
-	// Substituir arquivo original
 	if err := originalFile.Close(); err != nil {
 		return fmt.Errorf("error closing original tarball before overwrite: %v", err)
 	}
