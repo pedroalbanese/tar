@@ -72,7 +72,7 @@ func wrapCompressionWriter(w io.Writer, level, cores *int) (io.WriteCloser, erro
 	case "zstd":
 		if *cores == 0 {
 			*cores = 32
-			
+
 		}
 		writer, err = zstd.NewWriter(w,
 			zstd.WithEncoderLevel(zstd.EncoderLevel(*level)),
@@ -184,7 +184,7 @@ func walkpath(path string, f os.FileInfo, err error) error {
 	if err != nil {
 		log.Fatal(path + " not found. Process aborted.")
 	}
-	header.Name = path
+	header.Name = filepath.ToSlash(path)
 	if *appendf && tw != nil {
 		if f.IsDir() {
 			header.Name = strings.TrimSuffix(path, "/")
@@ -209,7 +209,7 @@ func walkpath(path string, f os.FileInfo, err error) error {
 	ifile, _ := os.Open(path)
 	io.Copy(tw, ifile)
 	if *tfile != "-" {
-		fmt.Fprintf(os.Stderr, "%s with %d bytes\n", path, f.Size())
+		fmt.Fprintf(os.Stderr, "%s with %d bytes\n", header.Name, f.Size())
 	}
 	return nil
 }
@@ -260,17 +260,17 @@ func main() {
 		default:
 			*algorithm = "none"
 		}
-		
+
 		if *algorithm != "none" {
 			*compress = true
 		}
 	}
-	
-	if len(os.Args) == 1 {
+
+	if len(os.Args) == 1 || *help {
 		fmt.Printf("Usage for %[1]s: %[1]s [OPTION] [-f FILE] [FILES ...]\n", "tar")
 		flag.PrintDefaults()
 	}
-		
+
 	if *fstats {
 		err := stats(*tfile, *tfile == "-")
 		if err != nil {
@@ -608,6 +608,9 @@ func main() {
 }
 
 func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
+	// Primeiro, ler todos os arquivos existentes no tarball
+	existingFiles := make(map[string]bool)
+
 	originalFile, err := os.Open(tarballPath)
 	if err != nil {
 		return fmt.Errorf("error opening existing tarball: %v", err)
@@ -620,6 +623,26 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 	}
 	tr := tar.NewReader(cr)
 
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("error reading original tarball: %v", err)
+		}
+		existingFiles[hdr.Name] = true
+	}
+
+	// Fechar e reabrir o arquivo original
+	originalFile.Close()
+	originalFile, err = os.Open(tarballPath)
+	if err != nil {
+		return fmt.Errorf("error reopening tarball: %v", err)
+	}
+	defer originalFile.Close()
+
+	// Criar buffer para o novo tarball
 	var buffer bytes.Buffer
 	level := *level
 	cores := 0
@@ -627,7 +650,17 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 	if err != nil {
 		return fmt.Errorf("compression writer error: %v", err)
 	}
+	defer cw.Close()
+
 	tw := tar.NewWriter(cw)
+	defer tw.Close()
+
+	// Copiar arquivos existentes
+	cr, err = wrapCompressionReader(originalFile)
+	if err != nil {
+		return fmt.Errorf("compression reader error: %v", err)
+	}
+	tr = tar.NewReader(cr)
 
 	for {
 		hdr, err := tr.Next()
@@ -645,11 +678,28 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
+	// Função para gerar nome único
+	generateUniqueName := func(name string) string {
+		ext := filepath.Ext(name)
+		base := name[:len(name)-len(ext)]
+		count := 1
+
+		for {
+			newName := fmt.Sprintf("%s_%d%s", base, count, ext)
+			if _, exists := existingFiles[newName]; !exists {
+				return newName
+			}
+			count++
+		}
+	}
+
+	// Adicionar novos arquivos com verificação de duplicados
 	for _, pattern := range filesToAdd {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			return fmt.Errorf("error matching pattern %s: %v", pattern, err)
 		}
+
 		for _, match := range matches {
 			err := filepath.Walk(match, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
@@ -661,8 +711,30 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 					return fmt.Errorf("error creating header for %s: %v", path, err)
 				}
 
-				relPath, _ := filepath.Rel(".", path)
+				relPath, err := filepath.Rel(".", path)
+				if err != nil {
+					return fmt.Errorf("error getting relative path: %v", err)
+				}
 				header.Name = filepath.ToSlash(relPath)
+
+				// Verificar se arquivo já existe
+				if _, exists := existingFiles[header.Name]; exists {
+					fmt.Printf("File with the same name already exists in the tarball: %s\n", header.Name)
+					fmt.Printf("Do you want to append it? (y/n): ")
+					var response string
+					fmt.Scanln(&response)
+					if strings.ToLower(response) != "y" {
+						fmt.Printf("Skipping file: %s\n", header.Name)
+						return nil
+					}
+
+					// Gerar novo nome único
+					header.Name = generateUniqueName(header.Name)
+					fmt.Printf("Duplicated file renamed to: %s\n", header.Name)
+				}
+
+				// Adicionar ao mapa de arquivos existentes
+				existingFiles[header.Name] = true
 
 				if err := tw.WriteHeader(header); err != nil {
 					return fmt.Errorf("error writing header for %s: %v", path, err)
@@ -680,7 +752,7 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 					}
 				}
 
-				fmt.Printf("Appended: %s (%d bytes)\n", header.Name, info.Size())
+				fmt.Printf("%s (%d bytes)\n", header.Name, info.Size())
 				return nil
 			})
 
@@ -690,6 +762,7 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
+	// Fechar escritores
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("error closing tar writer: %v", err)
 	}
@@ -697,6 +770,7 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		return fmt.Errorf("error closing compression writer: %v", err)
 	}
 
+	// Substituir arquivo original
 	if err := originalFile.Close(); err != nil {
 		return fmt.Errorf("error closing original tarball before overwrite: %v", err)
 	}
@@ -704,7 +778,7 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		return fmt.Errorf("error writing updated tarball: %v", err)
 	}
 
-	if err := reorganizeTarball(*tfile); err != nil {
+	if err := reorganizeTarball(tarballPath); err != nil {
 		fmt.Println("Error:", err)
 	}
 
@@ -838,9 +912,9 @@ func extractDir(tr *tar.Reader, dirPath string, toStdout bool) error {
 		}
 
 		if strings.HasPrefix(hdr.Name, dirPath) {
-			destPath := hdr.Name
+			destPath := filepath.FromSlash(hdr.Name)
 			if strings.HasSuffix(dirPath, "/") {
-				destPath = path.Join(dirPath, path.Base(hdr.Name))
+				destPath = path.Join(filepath.FromSlash(dirPath), path.Base(hdr.Name))
 			}
 
 			fi := hdr.FileInfo()
