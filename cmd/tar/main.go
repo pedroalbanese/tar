@@ -174,7 +174,7 @@ func addNumericSuffix(filename string) string {
 			break
 		}
 		count++
-		newName = fmt.Sprintf("%s_%d%s", name, count, ext)
+		newName = fmt.Sprintf("%s_%04d%s", name, count, ext)
 	}
 	return newName
 }
@@ -664,7 +664,7 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		count := 1
 
 		for {
-			newName := fmt.Sprintf("%s_%d%s", base, count, ext)
+			newName := fmt.Sprintf("%s_%04d%s", base, count, ext)
 			if _, exists := existingFiles[newName]; !exists {
 				return newName
 			}
