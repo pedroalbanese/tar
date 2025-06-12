@@ -538,7 +538,10 @@ func main() {
 			}
 			tw = tar.NewWriter(writer)
 
-			for _, incpath := range flag.Args() {
+//			for _, incpath := range flag.Args() {
+			args := flag.Args()
+			sort.Strings(args)
+			for _, incpath := range args {
 				files, err := filepath.Glob(incpath)
 				if err != nil {
 					fmt.Println("Error getting files matching pattern:", err)
@@ -583,7 +586,10 @@ func main() {
 			tw = tar.NewWriter(writer)
 		}
 
-		for _, incpath := range flag.Args() {
+//		for _, incpath := range flag.Args() {
+		args := flag.Args()
+		sort.Strings(args)
+		for _, incpath := range args {
 			files, err := filepath.Glob(incpath)
 			if err != nil {
 				fmt.Println("Error getting files matching pattern:", err)
@@ -681,6 +687,7 @@ func appendToCompressedTarball(tarballPath string, filesToAdd []string) error {
 		}
 	}
 
+	sort.Strings(filesToAdd)
 	for _, pattern := range filesToAdd {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
@@ -1317,6 +1324,7 @@ func reorganizeTarball(tarballPath string) error {
 	if err := tw.Close(); err != nil {
 		return fmt.Errorf("Error closing tar writer: %s", err)
 	}
+	
 	if compressionWriter != nil {
 		if err := compressionWriter.Close(); err != nil {
 			return fmt.Errorf("Error closing compression writer: %s", err)
