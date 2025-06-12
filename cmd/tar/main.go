@@ -307,6 +307,9 @@ func main() {
 			if err != nil {
 				log.Fatalln(err)
 			}
+			if isSpecialHeader(hdr.Name) {
+				continue
+			}
 			fileSize := float64(hdr.Size)
 
 			size := "bytes"
@@ -393,7 +396,10 @@ func main() {
 			if err != nil {
 				log.Fatal(err)
 			}
-
+			if isSpecialHeader(hdr.Name) {
+				continue
+			}
+			
 			for pattern := range targets {
 				matched, err := filepath.Match(pattern, filepath.FromSlash(hdr.Name))
 				if err != nil {
@@ -467,6 +473,9 @@ func main() {
 				}
 				if err != nil {
 					log.Fatalln(err)
+				}
+				if isSpecialHeader(hdr.Name) {
+					continue
 				}
 				fi := hdr.FileInfo()
 				if fi.IsDir() {
@@ -789,6 +798,14 @@ func findDuplicateFile(filename string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+func isSpecialHeader(name string) bool {
+    return name == "pax_global_header" || 
+           name == ".PKGINFO" || 
+           name == ".SIGN.RSA" || 
+           strings.HasPrefix(name, ".MTREE") ||
+           strings.HasPrefix(name, "._")
 }
 
 func stats(tarballPath string, stdinInput bool) error {
